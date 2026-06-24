@@ -10,11 +10,13 @@ import Graphic from "@arcgis/core/Graphic.js";
 import GraphicsLayer from "@arcgis/core/layers/GraphicsLayer.js";
 import Point from "@arcgis/core/geometry/Point.js";
 import Polyline from "@arcgis/core/geometry/Polyline.js";
+import { getDictionary } from "../i18n.js";
 import { geocodePlace } from "../utils/geocoder.js";
 import { solveRoute } from "../utils/routeService.js";
-import { MOCK_SERVICE_POINTS, serviceTypeLabels } from "../data/mockServicePoints.js";
+import { MOCK_SERVICE_POINTS } from "../data/mockServicePoints.js";
 
 const TURKEY_CENTER = [35.2433, 38.9637];
+const DEFAULT_LABELS = getDictionary("tr").map;
 
 function escapeHtml(value) {
   return String(value)
@@ -60,11 +62,13 @@ function pointSymbol(color, size = 14) {
   };
 }
 
-function buildPopupContent(location) {
+function buildPopupContent(location, labels) {
   const details = location.details ?? [];
   const rows = [
-    `<strong>Ad:</strong> ${escapeHtml(location.name)}`,
-    location.description ? `<strong>Açıklama:</strong> ${escapeHtml(location.description)}` : null,
+    `<strong>${escapeHtml(labels.popupName)}:</strong> ${escapeHtml(location.name)}`,
+    location.description
+      ? `<strong>${escapeHtml(labels.popupDescription)}:</strong> ${escapeHtml(location.description)}`
+      : null,
     ...details.map(
       (detail) => `<strong>${escapeHtml(detail.label)}:</strong> ${escapeHtml(detail.value)}`
     )
@@ -74,10 +78,11 @@ function buildPopupContent(location) {
 }
 
 const GeoMapView = forwardRef(function GeoMapView(
-  { onReadyChange, onSelectionChange },
+  { labels = DEFAULT_LABELS, onReadyChange, onSelectionChange },
   ref
 ) {
   const mapContainerRef = useRef(null);
+  const labelsRef = useRef(labels);
   const viewRef = useRef(null);
   const markerLayerRef = useRef(null);
   const routeLayerRef = useRef(null);
@@ -85,9 +90,14 @@ const GeoMapView = forwardRef(function GeoMapView(
   const selectedPointRef = useRef(null);
 
   useEffect(() => {
-    const markerLayer = new GraphicsLayer({ title: "Konum işaretleri" });
-    const routeLayer = new GraphicsLayer({ title: "Rota çizimleri" });
-    const serviceLayer = new GraphicsLayer({ title: "Yakınlık analizi" });
+    labelsRef.current = labels;
+  }, [labels]);
+
+  useEffect(() => {
+    const currentLabels = labelsRef.current;
+    const markerLayer = new GraphicsLayer({ title: currentLabels.markerLayerTitle });
+    const routeLayer = new GraphicsLayer({ title: currentLabels.routeLayerTitle });
+    const serviceLayer = new GraphicsLayer({ title: currentLabels.serviceLayerTitle });
 
     markerLayerRef.current = markerLayer;
     routeLayerRef.current = routeLayer;
@@ -129,7 +139,7 @@ const GeoMapView = forwardRef(function GeoMapView(
       selectedPointRef.current = {
         longitude,
         latitude,
-        name: "Seçili nokta"
+        name: labelsRef.current.selectedPointName
       };
       onSelectionChange(selectedPointRef.current);
     });
@@ -160,9 +170,10 @@ const GeoMapView = forwardRef(function GeoMapView(
   async function addLocationGraphic(location, options = {}) {
     const view = viewRef.current;
     const markerLayer = markerLayerRef.current;
+    const currentLabels = labelsRef.current;
 
     if (!view || !markerLayer) {
-      throw new Error("Harita henüz hazır değil.");
+      throw new Error(currentLabels.mapNotReady);
     }
 
     if (!options.keepExisting) {
@@ -178,7 +189,7 @@ const GeoMapView = forwardRef(function GeoMapView(
       },
       popupTemplate: {
         title: location.name,
-        content: buildPopupContent(location)
+        content: buildPopupContent(location, currentLabels)
       }
     });
 
@@ -200,14 +211,14 @@ const GeoMapView = forwardRef(function GeoMapView(
     async showPointOnMap(location) {
       await addLocationGraphic(location);
       return {
-        answer: `${location.name} haritada gösterildi.`
+        answer: labelsRef.current.shownOnMap(location.name)
       };
     },
 
     async showKnownLocation(location) {
       await addLocationGraphic(location);
       return {
-        answer: `${location.name} haritada gösterildi.`
+        answer: labelsRef.current.shownOnMap(location.name)
       };
     },
 
@@ -227,7 +238,8 @@ const GeoMapView = forwardRef(function GeoMapView(
     },
 
     async geocodeAndShow(query) {
-      const result = await geocodePlace(query);
+      const currentLabels = labelsRef.current;
+      const result = await geocodePlace(query, currentLabels.auth);
 
       await addLocationGraphic({
         name: result.name,
@@ -235,30 +247,31 @@ const GeoMapView = forwardRef(function GeoMapView(
         latitude: result.latitude,
         description: result.address,
         details: [
-          { label: "Kaynak", value: "Esri World Geocoding Service" },
-          { label: "Eşleşme puanı", value: `${Math.round(result.score)} / 100` }
+          { label: currentLabels.sourceLabel, value: "Esri World Geocoding Service" },
+          { label: currentLabels.matchScoreLabel, value: `${Math.round(result.score)} / 100` }
         ],
         zoom: 12
       });
 
       return {
-        answer: `${result.name} haritada gösterildi.`
+        answer: currentLabels.shownOnMap(result.name)
       };
     },
 
     async findNearestFeature(serviceType = "hospital") {
       const view = viewRef.current;
       const serviceLayer = serviceLayerRef.current;
+      const currentLabels = labelsRef.current;
 
       if (!view || !serviceLayer) {
-        throw new Error("Harita henüz hazır değil.");
+        throw new Error(currentLabels.mapNotReady);
       }
 
       const origin =
         selectedPointRef.current ?? {
           longitude: view.center.longitude,
           latitude: view.center.latitude,
-          name: "Harita merkezi"
+          name: currentLabels.mapCenterName
         };
 
       const points = MOCK_SERVICE_POINTS[serviceType] ?? MOCK_SERVICE_POINTS.hospital;
@@ -276,16 +289,19 @@ const GeoMapView = forwardRef(function GeoMapView(
         symbol: pointSymbol("#2563eb", 12),
         popupTemplate: {
           title: origin.name,
-          content: "Yakınlık analizi başlangıç noktası"
+          content: currentLabels.nearestOriginPopup
         }
       });
+
+      const serviceLabel =
+        currentLabels.serviceTypes?.[serviceType] ?? currentLabels.servicePoint;
 
       const nearestGraphic = new Graphic({
         geometry: createPoint(nearest),
         symbol: pointSymbol("#dc2626", 16),
         popupTemplate: {
           title: nearest.name,
-          content: `${serviceTypeLabels[serviceType] ?? "Hizmet noktası"} - Yaklaşık ${nearest.distanceKm.toFixed(1)} km`
+          content: `${serviceLabel} - ${currentLabels.approximate} ${nearest.distanceKm.toFixed(1)} km`
         }
       });
 
@@ -320,30 +336,38 @@ const GeoMapView = forwardRef(function GeoMapView(
       openPopup(view, nearestGraphic, nearestGraphic.geometry);
 
       const sourceText = selectedPointRef.current
-        ? "Seçili noktaya göre"
-        : "Harita merkezi baz alınarak";
+        ? currentLabels.selectedPointBased
+        : currentLabels.mapCenterBased;
 
       return {
-        answer: `${sourceText} en yakın ${serviceTypeLabels[serviceType] ?? "hizmet noktası"}: ${nearest.name}. Yaklaşık ${nearest.distanceKm.toFixed(1)} km uzaklıkta.`
+        answer: currentLabels.nearestAnswer({
+          sourceText,
+          serviceLabel,
+          nearestName: nearest.name,
+          distanceKm: nearest.distanceKm.toFixed(1)
+        })
       };
     },
 
     async createRoute(from, to) {
+      const currentLabels = labelsRef.current;
+
       if (!from || !to) {
-        throw new Error(
-          "Rota için başlangıç ve varış yeri gerekir. Örn. Ankara'dan İstanbul'a rota çiz."
-        );
+        throw new Error(currentLabels.routeMissingInput);
       }
 
       const view = viewRef.current;
       const routeLayer = routeLayerRef.current;
 
       if (!view || !routeLayer) {
-        throw new Error("Harita henüz hazır değil.");
+        throw new Error(currentLabels.mapNotReady);
       }
 
-      const [start, finish] = await Promise.all([geocodePlace(from), geocodePlace(to)]);
-      const routeResult = await solveRoute(start, finish);
+      const [start, finish] = await Promise.all([
+        geocodePlace(from, currentLabels.auth),
+        geocodePlace(to, currentLabels.auth)
+      ]);
+      const routeResult = await solveRoute(start, finish, currentLabels.auth);
       const routeGraphic = routeResult.routeGraphic;
 
       routeGraphic.symbol = {
@@ -362,7 +386,7 @@ const GeoMapView = forwardRef(function GeoMapView(
           name: start.name,
           longitude: start.longitude,
           latitude: start.latitude,
-          description: "Rota başlangıcı"
+          description: currentLabels.routeStart
         },
         { color: "#2563eb", keepExisting: false, size: 12 }
       );
@@ -371,7 +395,7 @@ const GeoMapView = forwardRef(function GeoMapView(
           name: finish.name,
           longitude: finish.longitude,
           latitude: finish.latitude,
-          description: "Rota varışı"
+          description: currentLabels.routeEnd
         },
         { color: "#dc2626", keepExisting: true, size: 12 }
       );
@@ -386,13 +410,18 @@ const GeoMapView = forwardRef(function GeoMapView(
 
       const distanceText = routeResult.totalLengthKm
         ? `${routeResult.totalLengthKm.toFixed(1)} km`
-        : "mesafe bilgisi alınamadı";
+        : currentLabels.noDistance;
       const durationText = routeResult.totalTimeMinutes
         ? `${Math.round(routeResult.totalTimeMinutes)} dk`
-        : "süre bilgisi alınamadı";
+        : currentLabels.noDuration;
 
       return {
-        answer: `${start.name} ile ${finish.name} arasında rota çizildi. Mesafe: ${distanceText}, süre: ${durationText}.`
+        answer: currentLabels.routeAnswer({
+          startName: start.name,
+          finishName: finish.name,
+          distanceText,
+          durationText
+        })
       };
     }
   }));

@@ -1,84 +1,72 @@
 const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
 const DEFAULT_OLLAMA_MODEL = "qwen2.5:7b";
 
-const geoAISystemPrompt = `
-Sen bir GeoAI action planner'sın.
+function buildGeoAISystemPrompt(language = "tr") {
+  const answerLanguage = language === "en" ? "English" : "Turkish";
 
-Görevin:
-Kullanıcının Türkçe doğal dilde yazdığı coğrafi veya harita tabanlı soruyu yorumlamak.
-Sadece geçerli JSON döndürmek.
-Markdown yazma.
-Açıklama metni yazma.
-Kod yazma.
-JSON dışında hiçbir şey döndürme.
+  return `
+You are a GeoAI action planner for a web app that uses Esri ArcGIS Maps SDK for JavaScript.
 
-Uygulama Esri ArcGIS Maps SDK for JavaScript kullanıyor.
+Your job:
+- Interpret Turkish or English geographic and map-based user requests.
+- Return only valid JSON.
+- Do not write Markdown.
+- Do not write explanations outside JSON.
+- Do not write code.
 
-Desteklenen cevap tipleri:
+Supported response shapes:
 
-1. Genel coğrafi bilgi cevabı:
+1. General geographic answer:
 {
   "type": "geo_answer",
-  "answer": "kısa ve doğru cevap",
+  "answer": "short and correct answer",
   "mapAction": {
     "action": "show_location",
-    "name": "yer adı",
+    "name": "place name",
     "latitude": number,
     "longitude": number,
     "zoom": number
   }
 }
 
-2. Haritada yer gösterme:
+2. Show a place on the map:
 {
   "type": "map_action",
-  "answer": "kısa açıklama",
+  "answer": "short explanation",
   "mapAction": {
     "action": "geocode",
-    "query": "aranacak yer adı"
+    "query": "place name to search"
   }
 }
 
-3. Haritayı temizleme:
+3. Clear temporary map graphics:
 {
   "type": "map_action",
-  "answer": "Haritadaki geçici grafikler temizlendi.",
+  "answer": "Temporary map graphics have been cleared.",
   "mapAction": {
     "action": "clear_graphics"
   }
 }
 
-4. Desteklenmeyen istek:
+4. Unsupported request:
 {
   "type": "unsupported",
-  "answer": "Bu isteği şu anda desteklemiyorum.",
+  "answer": "I do not support this request yet.",
   "mapAction": null
 }
 
-Kurallar:
-- Sadece JSON döndür.
-- JSON geçerli olmalı.
-- Bilmediğin koordinatları uydurma.
-- Eğer yer adı biliniyor ama koordinat bilinmiyorsa geocode action kullan.
-- Türkiye coğrafyasıyla ilgili temel sorularda kısa cevap ver.
-- Cevap Türkçe olsun.
-- Kullanıcının sorusu haritada gösterilecek bir yer içeriyorsa mapAction üret.
-- Silme, güncelleme veya veri değiştirme gibi işlemler üretme.
-- Sadece görüntüleme, sorgulama, analiz ve bilgilendirme mantığında kal.
-
-Örnek:
-{
-  "type": "geo_answer",
-  "answer": "Türkiye'nin en yüksek dağı Ağrı Dağı'dır. Yaklaşık 5.137 metre yüksekliğindedir.",
-  "mapAction": {
-    "action": "show_location",
-    "name": "Ağrı Dağı",
-    "latitude": 39.702,
-    "longitude": 44.292,
-    "zoom": 10
-  }
-}
+Rules:
+- Return only JSON.
+- The JSON must be valid.
+- Do not invent coordinates.
+- If a place name is known but coordinates are not known, use the geocode action.
+- Keep geographic answers concise and factual.
+- The answer field must be written in ${answerLanguage}.
+- If the user's request contains a place that should be shown on the map, produce a mapAction.
+- Do not produce destructive edit, delete, or data mutation actions.
+- Stay within viewing, querying, analysis, and informational behavior.
 `;
+}
 
 function getOllamaUrl() {
   return process.env.OLLAMA_BASE_URL || DEFAULT_OLLAMA_BASE_URL;
@@ -94,7 +82,7 @@ function parseOllamaJsonResponse(rawResponse) {
   } catch {
     const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error("Ollama geçerli JSON döndürmedi.");
+      throw new Error("Ollama did not return valid JSON.");
     }
 
     return JSON.parse(jsonMatch[0]);
@@ -102,6 +90,8 @@ function parseOllamaJsonResponse(rawResponse) {
 }
 
 export async function askOllamaGeoAI(message, context = {}) {
+  const language = context.language === "en" ? "en" : "tr";
+
   const response = await fetch(`${getOllamaUrl()}/api/generate`, {
     method: "POST",
     headers: {
@@ -109,12 +99,12 @@ export async function askOllamaGeoAI(message, context = {}) {
     },
     body: JSON.stringify({
       model: getOllamaModel(),
-      system: geoAISystemPrompt,
+      system: buildGeoAISystemPrompt(language),
       prompt: `
-Kullanıcı mesajı:
+User message:
 ${message}
 
-Uygulama context bilgisi:
+Application context:
 ${JSON.stringify(context, null, 2)}
 `,
       stream: false,
@@ -123,12 +113,12 @@ ${JSON.stringify(context, null, 2)}
   });
 
   if (!response.ok) {
-    throw new Error("Ollama servisine bağlanılamadı.");
+    throw new Error("Could not connect to the Ollama service.");
   }
 
   const data = await response.json();
   if (!data.response || typeof data.response !== "string") {
-    throw new Error("Ollama beklenen response alanını döndürmedi.");
+    throw new Error("Ollama did not return the expected response field.");
   }
 
   return parseOllamaJsonResponse(data.response);

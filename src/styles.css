@@ -124,6 +124,34 @@ button:disabled {
   line-height: 1.45;
 }
 
+.language-control {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #dbe3ea;
+  border-radius: 8px;
+  padding: 4px;
+  color: #475569;
+  background: #ffffff;
+}
+
+.language-button {
+  min-width: 34px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  color: #475569;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.language-button.is-active {
+  color: #ffffff;
+  background: #0f766e;
+}
+
 .status-grid {
   display: flex;
   flex-wrap: wrap;

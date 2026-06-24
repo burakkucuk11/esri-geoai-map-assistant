@@ -4,8 +4,9 @@ import { getArcGISApiKey, toFriendlyArcGISError } from "./arcgisAuth.js";
 const GEOCODING_URL =
   "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer";
 
-export async function geocodePlace(searchText) {
-  const apiKey = getArcGISApiKey("Konum arama");
+export async function geocodePlace(searchText, authMessages) {
+  const featureName = authMessages?.geocodeFeatureName ?? "Konum arama";
+  const apiKey = getArcGISApiKey(featureName, authMessages);
 
   let candidates;
   try {
@@ -26,7 +27,7 @@ export async function geocodePlace(searchText) {
       }
     );
   } catch (error) {
-    throw toFriendlyArcGISError(error, "Konum arama");
+    throw toFriendlyArcGISError(error, featureName, authMessages);
   }
 
   const candidate = candidates?.[0];

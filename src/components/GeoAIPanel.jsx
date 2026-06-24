@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
   AlertTriangle,
+  Languages,
   Loader2,
   MapPin,
   MessageSquareText,
@@ -13,11 +14,15 @@ export default function GeoAIPanel({
   inputValue,
   isMapReady,
   isProcessing,
+  language,
+  languageOptions,
   messages,
   selectedPoint,
   apiKeyMissing,
+  t,
   onExampleClick,
   onInputChange,
+  onLanguageChange,
   onSubmit
 }) {
   const messageListRef = useRef(null);
@@ -30,27 +35,43 @@ export default function GeoAIPanel({
   }, [messages]);
 
   return (
-    <aside className="assistant-panel" aria-label="GeoAI asistan paneli">
+    <aside className="assistant-panel" aria-label={t.ariaLabel}>
       <header className="panel-header">
         <div className="panel-title-row">
           <span className="panel-icon" aria-hidden="true">
             <Sparkles size={20} />
           </span>
           <div>
-            <h1>GeoAI Asistan</h1>
-            <p>Esri servisleriyle çalışan coğrafi asistan</p>
+            <h1>{t.title}</h1>
+            <p>{t.subtitle}</p>
           </div>
+        </div>
+
+        <div className="language-control" aria-label={t.languageSelectorLabel}>
+          <Languages size={16} aria-hidden="true" />
+          {languageOptions.map((option) => (
+            <button
+              aria-pressed={language === option.code}
+              className={`language-button ${language === option.code ? "is-active" : ""}`}
+              key={option.code}
+              onClick={() => onLanguageChange(option.code)}
+              title={t.languageButtonTitle(option.label)}
+              type="button"
+            >
+              {option.shortLabel}
+            </button>
+          ))}
         </div>
 
         <div className="status-grid">
           <div className={`status-pill ${isMapReady ? "is-ready" : ""}`}>
             <MapPin size={16} aria-hidden="true" />
-            <span>{isMapReady ? "Harita hazır" : "Harita yükleniyor"}</span>
+            <span>{isMapReady ? t.mapReady : t.mapLoading}</span>
           </div>
           {selectedPoint && (
             <div className="status-pill">
               <span>
-                Seçili nokta: {selectedPoint.latitude.toFixed(3)},{" "}
+                {t.selectedPoint}: {selectedPoint.latitude.toFixed(3)},{" "}
                 {selectedPoint.longitude.toFixed(3)}
               </span>
             </div>
@@ -61,11 +82,11 @@ export default function GeoAIPanel({
       {apiKeyMissing && (
         <div className="inline-warning" role="status">
           <AlertTriangle size={17} aria-hidden="true" />
-          <span>.env dosyasında Esri API key yok. Arama ve rota servisleri sınırlı çalışır.</span>
+          <span>{t.apiKeyMissingWarning}</span>
         </div>
       )}
 
-      <section className="example-section" aria-label="Örnek sorular">
+      <section className="example-section" aria-label={t.examplesLabel}>
         {examples.map((example) => (
           <button
             className="example-chip"
@@ -89,9 +110,9 @@ export default function GeoAIPanel({
           >
             <div className="message-role">
               <MessageSquareText size={15} aria-hidden="true" />
-              <span>{message.role === "user" ? "Sen" : "GeoAI"}</span>
+              <span>{message.role === "user" ? t.roleUser : t.roleAssistant}</span>
             </div>
-            <p>{message.content}</p>
+            <p>{message.i18nKey ? t[message.i18nKey] : message.content}</p>
           </article>
         ))}
       </section>
@@ -104,7 +125,7 @@ export default function GeoAIPanel({
         }}
       >
         <label className="visually-hidden" htmlFor="geoai-question">
-          Coğrafi soru
+          {t.questionLabel}
         </label>
         <textarea
           id="geoai-question"
@@ -115,7 +136,7 @@ export default function GeoAIPanel({
               onSubmit();
             }
           }}
-          placeholder="Örn. Ankara'yı haritada göster"
+          placeholder={t.placeholder}
           rows={3}
           value={inputValue}
         />
@@ -125,7 +146,7 @@ export default function GeoAIPanel({
           ) : (
             <Send size={18} aria-hidden="true" />
           )}
-          <span>Gönder</span>
+          <span>{t.send}</span>
         </button>
       </form>
     </aside>

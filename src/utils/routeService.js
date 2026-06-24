@@ -21,8 +21,9 @@ function toStopGraphic(place) {
   });
 }
 
-export async function solveRoute(start, finish) {
-  const apiKey = getArcGISApiKey("Rota servisi");
+export async function solveRoute(start, finish, authMessages) {
+  const featureName = authMessages?.routeFeatureName ?? "Rota servisi";
+  const apiKey = getArcGISApiKey(featureName, authMessages);
 
   const params = new RouteParameters({
     apiKey,
@@ -37,7 +38,7 @@ export async function solveRoute(start, finish) {
   try {
     response = await solve(ROUTE_URL, params);
   } catch (error) {
-    throw toFriendlyArcGISError(error, "Rota servisi");
+    throw toFriendlyArcGISError(error, featureName, authMessages);
   }
 
   const routeResult = response.routeResults?.[0];

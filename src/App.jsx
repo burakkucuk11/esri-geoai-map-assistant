@@ -1,17 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import GeoAIPanel from "./components/GeoAIPanel.jsx";
 import GeoMapView from "./components/MapView.jsx";
+import { getDictionary, languageOptions } from "./i18n.js";
 import { askGeoAI } from "./services/geoAIClient.js";
 
-const EXAMPLE_QUESTIONS = [
-  "Türkiye'nin en yüksek dağı nedir?",
-  "Ankara'yı haritada göster",
-  "Van Gölü nerede?",
-  "Haritadaki işaretleri temizle",
-  "Türkiye'nin en uzun nehri nedir?"
-];
-
-function createMessage(role, content, meta = {}) {
+function createMessage(role, content = "", meta = {}) {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     role,
@@ -29,26 +22,28 @@ function hasCoordinates(mapAction) {
 
 export default function App() {
   const mapRef = useRef(null);
+  const [language, setLanguage] = useState("tr");
   const [inputValue, setInputValue] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isMapReady, setIsMapReady] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [messages, setMessages] = useState(() => [
-    createMessage(
-      "assistant",
-      "Merhaba, coğrafi sorular sorabilir veya haritada bir yer göstermemi isteyebilirsin.",
-      { intent: "welcome" }
-    )
+    createMessage("assistant", "", { intent: "welcome", i18nKey: "welcome" })
   ]);
+  const t = useMemo(() => getDictionary(language), [language]);
 
   const apiKeyMissing = useMemo(
     () => !import.meta.env.VITE_ARCGIS_API_KEY?.trim(),
     []
   );
 
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
+
   function getMapActions() {
     if (!mapRef.current) {
-      throw new Error("Harita henüz hazırlanıyor. Birkaç saniye sonra tekrar dene.");
+      throw new Error(t.messages.mapNotReady);
     }
 
     return mapRef.current;
@@ -58,21 +53,22 @@ export default function App() {
     return {
       selectedPoint,
       activeLayerId: null,
-      availableLayers: []
+      availableLayers: [],
+      language
     };
   }
 
   async function executeGeoAIAction(result) {
     const mapAction = result?.mapAction;
     if (!mapAction) {
-      return result?.answer || "GeoAI bir cevap döndürmedi.";
+      return result?.answer || t.messages.noAnswer;
     }
 
     const mapActions = getMapActions();
 
     if (mapAction.action === "show_location") {
       if (!hasCoordinates(mapAction)) {
-        throw new Error("GeoAI konum göstermek istedi, ancak geçerli koordinat döndürmedi.");
+        throw new Error(t.messages.invalidCoordinates);
       }
 
       await mapActions.showPointOnMap({
@@ -93,10 +89,10 @@ export default function App() {
 
     if (mapAction.action === "clear_graphics") {
       mapActions.clearGraphics();
-      return result.answer || "Haritadaki geçici grafikler temizlendi.";
+      return result.answer || t.messages.clearGraphics;
     }
 
-    return result.answer || "GeoAI isteği yorumladı, ancak bu harita aksiyonu desteklenmiyor.";
+    return result.answer || t.messages.unsupportedAction;
   }
 
   async function submitQuestion(questionOverride) {
@@ -122,7 +118,7 @@ export default function App() {
         ...current,
         createMessage(
           "assistant",
-          error.message || "İşlem sırasında beklenmeyen bir hata oluştu.",
+          error.message || t.messages.unexpectedError,
           { intent: "error" }
         )
       ]);
@@ -133,8 +129,9 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <section className="map-stage" aria-label="Harita alanı">
+      <section className="map-stage" aria-label={t.app.mapStageLabel}>
         <GeoMapView
+          labels={t.map}
           ref={mapRef}
           onReadyChange={setIsMapReady}
           onSelectionChange={setSelectedPoint}
@@ -142,22 +139,25 @@ export default function App() {
 
         {apiKeyMissing && (
           <div className="map-alert" role="status">
-            Esri servisleri için <strong>VITE_ARCGIS_API_KEY</strong> değeri eksik.
-            Harita açılabilir, ancak geocoding ve rota özellikleri API key ister.
+            {t.app.apiKeyMissingAlert}
           </div>
         )}
       </section>
 
       <GeoAIPanel
-        examples={EXAMPLE_QUESTIONS}
+        examples={t.examples}
         inputValue={inputValue}
         isMapReady={isMapReady}
         isProcessing={isProcessing}
+        language={language}
+        languageOptions={languageOptions}
         messages={messages}
         selectedPoint={selectedPoint}
         apiKeyMissing={apiKeyMissing}
+        t={{ ...t.panel, ...t.messages }}
         onExampleClick={submitQuestion}
         onInputChange={setInputValue}
+        onLanguageChange={setLanguage}
         onSubmit={submitQuestion}
       />
     </main>
