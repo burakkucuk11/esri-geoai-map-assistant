@@ -1,0 +1,27 @@
+{
+  "name": "geoai-esri-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "dev:frontend": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "server": "node server/index.js",
+    "dev:server": "nodemon server/index.js"
+  },
+  "dependencies": {
+    "@arcgis/core": "^4.31.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "vite": "^8.1.0",
+    "nodemon": "^3.1.7"
+  }
+}
