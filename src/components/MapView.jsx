@@ -12,7 +12,7 @@ import Point from "@arcgis/core/geometry/Point.js";
 import Polyline from "@arcgis/core/geometry/Polyline.js";
 import { getDictionary } from "../i18n.js";
 import { geocodePlace } from "../utils/geocoder.js";
-import { solveRoute } from "../utils/routeService.js";
+import { solveRoute, solveRouteForStops } from "../utils/routeService.js";
 import { MOCK_SERVICE_POINTS } from "../data/mockServicePoints.js";
 
 const TURKEY_CENTER = [35.2433, 38.9637];
@@ -299,6 +299,45 @@ const GeoMapView = forwardRef(function GeoMapView(
     };
   }
 
+  async function drawRouteForStops(locations) {
+    const view = viewRef.current;
+    const routeLayer = routeLayerRef.current;
+    const currentLabels = labelsRef.current;
+
+    if (!view || !routeLayer) {
+      throw new Error(currentLabels.mapNotReady);
+    }
+
+    const routeResult = await solveRouteForStops(locations, currentLabels.auth);
+    const routeGraphic = routeResult.routeGraphic;
+
+    routeGraphic.symbol = {
+      type: "simple-line",
+      color: "#f97316",
+      width: 5,
+      cap: "round",
+      join: "round"
+    };
+
+    routeLayer.removeAll();
+    routeLayer.add(routeGraphic);
+
+    await view.goTo(
+      {
+        target: routeGraphic.geometry,
+        padding: 110
+      },
+      { duration: 750 }
+    );
+
+    return {
+      stopCount: routeResult.stops.length,
+      totalLengthKm: routeResult.totalLengthKm,
+      totalTimeMinutes: routeResult.totalTimeMinutes,
+      stops: routeResult.stops
+    };
+  }
+
   useImperativeHandle(ref, () => ({
     async showPointOnMap(location) {
       await addLocationGraphic(location);
@@ -316,6 +355,10 @@ const GeoMapView = forwardRef(function GeoMapView(
 
     async showLocationsOnMap(options) {
       return addNumberedLocationGraphics(options);
+    },
+
+    async routeLocationsOnMap(locations) {
+      return drawRouteForStops(locations);
     },
 
     clearGraphics() {

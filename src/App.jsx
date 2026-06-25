@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Loader2, MapPin, Route, X } from "lucide-react";
 import GeoAIPanel from "./components/GeoAIPanel.jsx";
 import GeoMapView from "./components/MapView.jsx";
 import { getDictionary, languageOptions } from "./i18n.js";
@@ -20,12 +21,87 @@ function hasCoordinates(mapAction) {
   );
 }
 
+function formatDistanceKm(value, fallback) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? `${numericValue.toFixed(1)} km` : fallback;
+}
+
+function formatDurationMinutes(value, fallback) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? `${Math.round(numericValue)} dk` : fallback;
+}
+
+function RouteSummaryPanel({ panel, t, onClose }) {
+  if (!panel) {
+    return null;
+  }
+
+  return (
+    <aside className={`route-panel is-${panel.status}`} aria-label={t.title} role="status">
+      <header className="route-panel-header">
+        <div className="route-panel-title">
+          <Route size={18} aria-hidden="true" />
+          <div>
+            <h2>{t.title}</h2>
+            <p>
+              {panel.status === "loading"
+                ? t.loading
+                : panel.status === "error"
+                  ? t.errorTitle
+                  : t.ready(panel.stops.length)}
+            </p>
+          </div>
+        </div>
+        <button className="route-panel-close" onClick={onClose} title={t.close} type="button">
+          <X size={17} aria-hidden="true" />
+          <span className="visually-hidden">{t.close}</span>
+        </button>
+      </header>
+
+      {panel.status === "loading" && (
+        <div className="route-panel-loading">
+          <Loader2 className="spin" size={18} aria-hidden="true" />
+          <span>{t.loadingDetail}</span>
+        </div>
+      )}
+
+      {panel.status === "ready" && (
+        <>
+          <div className="route-metrics">
+            <div>
+              <span>{t.distance}</span>
+              <strong>{formatDistanceKm(panel.totalLengthKm, t.unavailable)}</strong>
+            </div>
+            <div>
+              <span>{t.duration}</span>
+              <strong>{formatDurationMinutes(panel.totalTimeMinutes, t.unavailable)}</strong>
+            </div>
+          </div>
+          <ol className="route-stop-list" aria-label={t.stops}>
+            {panel.stops.map((stop, index) => (
+              <li key={`${stop.name}-${index}`}>
+                <MapPin size={14} aria-hidden="true" />
+                <span>{stop.name}</span>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+
+      {panel.status === "error" && (
+        <p className="route-panel-error">{panel.error || t.unknownError}</p>
+      )}
+    </aside>
+  );
+}
+
 export default function App() {
   const mapRef = useRef(null);
   const [language, setLanguage] = useState("tr");
   const [inputValue, setInputValue] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isMapReady, setIsMapReady] = useState(false);
+  const [routePanel, setRoutePanel] = useState(null);
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [messages, setMessages] = useState(() => [
     createMessage("assistant", "", { intent: "welcome", i18nKey: "welcome" })
@@ -86,10 +162,32 @@ export default function App() {
         zoom: Number(mapAction.zoom) || undefined
       });
 
+      setRoutePanel({
+        status: "loading",
+        stops: locations
+      });
+
+      try {
+        const routeResult = await mapActions.routeLocationsOnMap(locations);
+        setRoutePanel({
+          status: "ready",
+          stops: locations,
+          totalLengthKm: routeResult.totalLengthKm,
+          totalTimeMinutes: routeResult.totalTimeMinutes
+        });
+      } catch (error) {
+        setRoutePanel({
+          status: "error",
+          stops: locations,
+          error: error.message
+        });
+      }
+
       return result.answer;
     }
 
     if (mapAction.action === "show_location") {
+      setRoutePanel(null);
       if (!hasCoordinates(mapAction)) {
         throw new Error(t.messages.invalidCoordinates);
       }
@@ -106,16 +204,19 @@ export default function App() {
     }
 
     if (mapAction.action === "geocode") {
+      setRoutePanel(null);
       const mapResult = await mapActions.geocodeAndShow(mapAction.query);
       return result.answer || mapResult.answer;
     }
 
     if (mapAction.action === "clear_graphics") {
+      setRoutePanel(null);
       mapActions.clearGraphics();
       return result.answer || t.messages.clearGraphics;
     }
 
     if (mapAction.action === "zoom_home") {
+      setRoutePanel(null);
       await mapActions.zoomHome();
       return result.answer || t.messages.zoomHome;
     }
@@ -163,6 +264,12 @@ export default function App() {
           ref={mapRef}
           onReadyChange={setIsMapReady}
           onSelectionChange={setSelectedPoint}
+        />
+
+        <RouteSummaryPanel
+          panel={routePanel}
+          t={t.routePanel}
+          onClose={() => setRoutePanel(null)}
         />
 
         {apiKeyMissing && (

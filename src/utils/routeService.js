@@ -8,7 +8,7 @@ import { getArcGISApiKey, toFriendlyArcGISError } from "./arcgisAuth.js";
 const ROUTE_URL =
   "https://route-api.arcgis.com/arcgis/rest/services/World/Route/NAServer/Route_World";
 
-function toStopGraphic(place) {
+function toStopGraphic(place, sequence = 1) {
   return new Graphic({
     geometry: new Point({
       longitude: place.longitude,
@@ -16,20 +16,39 @@ function toStopGraphic(place) {
       spatialReference: { wkid: 4326 }
     }),
     attributes: {
-      name: place.name
+      name: place.name,
+      sequence
     }
   });
 }
 
-export async function solveRoute(start, finish, authMessages) {
+export async function solveRouteForStops(stops, authMessages) {
   const featureName = authMessages?.routeFeatureName ?? "Rota servisi";
   const apiKey = getArcGISApiKey(featureName, authMessages);
+  const validStops = Array.isArray(stops)
+    ? stops.filter(
+        (stop) =>
+          Number.isFinite(Number(stop?.latitude)) &&
+          Number.isFinite(Number(stop?.longitude))
+      ).map((stop) => ({
+        ...stop,
+        latitude: Number(stop.latitude),
+        longitude: Number(stop.longitude)
+      }))
+    : [];
+
+  if (validStops.length < 2) {
+    throw new Error(authMessages?.routeMissingInput ?? "Rota için en az iki durak gerekir.");
+  }
 
   const params = new RouteParameters({
     apiKey,
     stops: new FeatureSet({
-      features: [toStopGraphic(start), toStopGraphic(finish)]
+      features: validStops.map((stop, index) => toStopGraphic(stop, index + 1))
     }),
+    findBestSequence: false,
+    preserveFirstStop: true,
+    preserveLastStop: true,
     returnDirections: true,
     directionsLengthUnits: "kilometers"
   });
@@ -50,6 +69,11 @@ export async function solveRoute(start, finish, authMessages) {
   return {
     routeGraphic: routeResult.route,
     totalLengthKm: routeResult.directions?.totalLength,
-    totalTimeMinutes: routeResult.directions?.totalTime
+    totalTimeMinutes: routeResult.directions?.totalTime,
+    stops: validStops
   };
+}
+
+export async function solveRoute(start, finish, authMessages) {
+  return solveRouteForStops([start, finish], authMessages);
 }

@@ -17,6 +17,19 @@ export const dictionaries = {
       apiKeyMissingAlert:
         "Esri servisleri için VITE_ARCGIS_API_KEY değeri eksik. Harita açılabilir, ancak geocoding ve rota özellikleri API key ister."
     },
+    routePanel: {
+      title: "Rotalama",
+      loading: "Rota hesaplanıyor",
+      loadingDetail: "Numaralı noktalar arasında rota çiziliyor.",
+      ready: (count) => `${count} duraklı rota`,
+      errorTitle: "Rota çizilemedi",
+      distance: "Mesafe",
+      duration: "Süre",
+      stops: "Duraklar",
+      close: "Rota panelini kapat",
+      unavailable: "alınamadı",
+      unknownError: "Rota bilgisi alınamadı."
+    },
     panel: {
       ariaLabel: "GeoAI asistan paneli",
       title: "GeoAI Asistan",
@@ -106,6 +119,19 @@ export const dictionaries = {
       mapStageLabel: "Map area",
       apiKeyMissingAlert:
         "VITE_ARCGIS_API_KEY is missing for Esri services. The map can still open, but geocoding and routing require an API key."
+    },
+    routePanel: {
+      title: "Routing",
+      loading: "Calculating route",
+      loadingDetail: "Drawing a route between the numbered points.",
+      ready: (count) => `${count}-stop route`,
+      errorTitle: "Route could not be drawn",
+      distance: "Distance",
+      duration: "Duration",
+      stops: "Stops",
+      close: "Close route panel",
+      unavailable: "unavailable",
+      unknownError: "Route information could not be loaded."
     },
     panel: {
       ariaLabel: "GeoAI assistant panel",
