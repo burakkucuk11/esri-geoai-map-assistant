@@ -73,6 +73,57 @@ button:disabled {
   line-height: 1.45;
 }
 
+.basemap-control {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  z-index: 4;
+  display: grid;
+  min-width: 190px;
+  gap: 8px;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16);
+}
+
+.basemap-control-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.basemap-control-title svg {
+  color: #0f766e;
+}
+
+.basemap-control select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #0f172a;
+  background: #ffffff;
+  font-size: 13px;
+  outline: none;
+}
+
+.basemap-control select:focus {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.13);
+}
+
+.basemap-control select:disabled {
+  color: #94a3b8;
+  background: #f8fafc;
+}
+
 .route-panel {
   position: absolute;
   top: 24px;
@@ -538,6 +589,12 @@ button:disabled {
     right: 14px;
     bottom: 14px;
     max-width: none;
+  }
+
+  .basemap-control {
+    right: 14px;
+    bottom: 14px;
+    min-width: 170px;
   }
 
   .route-panel {

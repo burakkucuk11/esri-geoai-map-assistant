@@ -6,9 +6,42 @@ const SUPPORTED_RESPONSE_TYPES = new Set(["geo_answer", "map_action", "unsupport
 const SUPPORTED_MAP_ACTIONS = new Set([
   "show_location",
   "show_locations",
+  "change_basemap",
   "geocode",
   "clear_graphics",
   "zoom_home"
+]);
+const SUPPORTED_BASEMAP_IDS = new Set([
+  "topo-vector",
+  "streets-vector",
+  "satellite",
+  "hybrid",
+  "dark-gray-vector",
+  "gray-vector",
+  "oceans",
+  "osm"
+]);
+const BASEMAP_ALIASES = new Map([
+  ["topo", "topo-vector"],
+  ["topographic", "topo-vector"],
+  ["topografik", "topo-vector"],
+  ["streets", "streets-vector"],
+  ["street", "streets-vector"],
+  ["sokak", "streets-vector"],
+  ["cadde", "streets-vector"],
+  ["uydu", "satellite"],
+  ["imagery", "satellite"],
+  ["hibrit", "hybrid"],
+  ["uydu-etiketli", "hybrid"],
+  ["labels", "hybrid"],
+  ["dark", "dark-gray-vector"],
+  ["koyu", "dark-gray-vector"],
+  ["gray", "gray-vector"],
+  ["grey", "gray-vector"],
+  ["gri", "gray-vector"],
+  ["ocean", "oceans"],
+  ["okyanus", "oceans"],
+  ["openstreetmap", "osm"]
 ]);
 
 export function getAIProvider() {
@@ -96,12 +129,13 @@ Supported JSON shape:
   "type": "geo_answer" | "map_action" | "unsupported",
   "answer": "short and correct answer",
   "mapAction": {
-    "action": "show_location" | "show_locations" | "geocode" | "clear_graphics" | "zoom_home",
+    "action": "show_location" | "show_locations" | "change_basemap" | "geocode" | "clear_graphics" | "zoom_home",
     "name": "place name",
     "latitude": number,
     "longitude": number,
     "zoom": number,
     "query": "place to geocode",
+    "basemapId": "topo-vector" | "streets-vector" | "satellite" | "hybrid" | "dark-gray-vector" | "gray-vector" | "oceans" | "osm",
     "locations": [
       {
         "name": "place name",
@@ -129,6 +163,18 @@ If a place name is known but coordinates are uncertain:
 
 If the user wants temporary map markers/graphics cleared:
 - use action: "clear_graphics".
+
+If the user wants to change the basemap:
+- use action: "change_basemap".
+- set basemapId to one of: "topo-vector", "streets-vector", "satellite", "hybrid", "dark-gray-vector", "gray-vector", "oceans", "osm".
+- "uydu", "satellite", "imagery" => "satellite".
+- "hibrit", "hybrid", "uydu etiketli" => "hybrid".
+- "sokak", "cadde", "streets" => "streets-vector".
+- "topografik", "topo" => "topo-vector".
+- "koyu", "dark" => "dark-gray-vector".
+- "gri", "gray" => "gray-vector".
+- "okyanus", "oceans" => "oceans".
+- "osm", "openstreetmap" => "osm".
 
 If the user wants to return to the initial map view:
 - use action: "zoom_home".
@@ -203,6 +249,16 @@ function parseOllamaJsonResponse(rawResponse) {
 
     return JSON.parse(jsonMatch[0]);
   }
+}
+
+function normalizeBasemapId(value) {
+  const basemapId = String(value || "").trim().toLowerCase().replace(/\s+/g, "-");
+
+  if (SUPPORTED_BASEMAP_IDS.has(basemapId)) {
+    return basemapId;
+  }
+
+  return BASEMAP_ALIASES.get(basemapId) || null;
 }
 
 function normalizeGeoAIResult(result) {
@@ -287,6 +343,16 @@ function normalizeGeoAIResult(result) {
   if (mapAction?.action === "geocode") {
     const query = String(mapAction.query || mapAction.name || "").trim();
     mapAction = query ? { action: "geocode", query } : null;
+  }
+
+  if (mapAction?.action === "change_basemap") {
+    const basemapId = normalizeBasemapId(mapAction.basemapId || mapAction.name);
+    mapAction = basemapId
+      ? {
+          action: "change_basemap",
+          basemapId
+        }
+      : null;
   }
 
   if (mapAction?.action === "clear_graphics") {

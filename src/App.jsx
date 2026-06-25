@@ -1,9 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, MapPin, Route, X } from "lucide-react";
+import { Layers, Loader2, MapPin, Route, X } from "lucide-react";
 import GeoAIPanel from "./components/GeoAIPanel.jsx";
 import GeoMapView from "./components/MapView.jsx";
 import { getDictionary, languageOptions } from "./i18n.js";
 import { askGeoAI } from "./services/geoAIClient.js";
+
+const DEFAULT_BASEMAP_ID = "topo-vector";
+const BASEMAP_OPTIONS = [
+  "topo-vector",
+  "streets-vector",
+  "satellite",
+  "hybrid",
+  "dark-gray-vector",
+  "gray-vector",
+  "oceans",
+  "osm"
+];
 
 function createMessage(role, content = "", meta = {}) {
   return {
@@ -29,6 +41,29 @@ function formatDistanceKm(value, fallback) {
 function formatDurationMinutes(value, fallback) {
   const numericValue = Number(value);
   return Number.isFinite(numericValue) ? `${Math.round(numericValue)} dk` : fallback;
+}
+
+function BasemapControl({ basemapId, disabled, options, t, onChange }) {
+  return (
+    <section className="basemap-control" aria-label={t.label}>
+      <div className="basemap-control-title">
+        <Layers size={16} aria-hidden="true" />
+        <span>{t.label}</span>
+      </div>
+      <select
+        aria-label={t.selectLabel}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        value={basemapId}
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {t.options[option]}
+          </option>
+        ))}
+      </select>
+    </section>
+  );
 }
 
 function RouteSummaryPanel({ panel, t, onClose }) {
@@ -101,6 +136,7 @@ export default function App() {
   const [inputValue, setInputValue] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isMapReady, setIsMapReady] = useState(false);
+  const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP_ID);
   const [routePanel, setRoutePanel] = useState(null);
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [messages, setMessages] = useState(() => [
@@ -130,8 +166,40 @@ export default function App() {
       selectedPoint,
       activeLayerId: null,
       availableLayers: [],
+      activeBasemapId: basemapId,
+      availableBasemaps: BASEMAP_OPTIONS,
       language
     };
+  }
+
+  async function changeBasemap(nextBasemapId, options = {}) {
+    const mapActions = getMapActions();
+    const result = mapActions.changeBasemap(nextBasemapId);
+    setBasemapId(result.basemapId);
+
+    if (options.addMessage) {
+      setMessages((current) => [
+        ...current,
+        createMessage("assistant", result.answer, { intent: "map_action" })
+      ]);
+    }
+
+    return result;
+  }
+
+  async function handleBasemapChange(nextBasemapId) {
+    try {
+      await changeBasemap(nextBasemapId);
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        createMessage(
+          "assistant",
+          error.message || t.messages.unexpectedError,
+          { intent: "error" }
+        )
+      ]);
+    }
   }
 
   async function executeGeoAIAction(result) {
@@ -141,6 +209,11 @@ export default function App() {
     }
 
     const mapActions = getMapActions();
+
+    if (mapAction.action === "change_basemap") {
+      const basemapResult = await changeBasemap(mapAction.basemapId);
+      return result.answer || basemapResult.answer;
+    }
 
     if (mapAction.action === "show_locations") {
       const locations = Array.isArray(mapAction.locations)
@@ -264,6 +337,14 @@ export default function App() {
           ref={mapRef}
           onReadyChange={setIsMapReady}
           onSelectionChange={setSelectedPoint}
+        />
+
+        <BasemapControl
+          basemapId={basemapId}
+          disabled={!isMapReady}
+          options={BASEMAP_OPTIONS}
+          t={t.basemapControl}
+          onChange={handleBasemapChange}
         />
 
         <RouteSummaryPanel

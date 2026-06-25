@@ -223,6 +223,138 @@ export const geoKnowledgeBase = [
   },
   {
     keywords: [
+      "uydu haritaya gec",
+      "uydu gorunumune gec",
+      "uydu basemap",
+      "satellite basemap",
+      "change basemap to satellite",
+      "haritayi uydu yap"
+    ],
+    response: {
+      type: "map_action",
+      answer: "Basemap uydu g\u00f6r\u00fcn\u00fcm\u00fcne al\u0131nd\u0131.",
+      mapAction: {
+        action: "change_basemap",
+        basemapId: "satellite"
+      }
+    }
+  },
+  {
+    keywords: [
+      "hibrit haritaya gec",
+      "hybrid basemap",
+      "uydu etiketli harita",
+      "haritayi hibrit yap"
+    ],
+    response: {
+      type: "map_action",
+      answer: "Basemap hibrit g\u00f6r\u00fcn\u00fcme al\u0131nd\u0131.",
+      mapAction: {
+        action: "change_basemap",
+        basemapId: "hybrid"
+      }
+    }
+  },
+  {
+    keywords: [
+      "sokak haritasina gec",
+      "cadde haritasina gec",
+      "streets basemap",
+      "change basemap to streets",
+      "haritayi sokak yap"
+    ],
+    response: {
+      type: "map_action",
+      answer: "Basemap sokak haritas\u0131na al\u0131nd\u0131.",
+      mapAction: {
+        action: "change_basemap",
+        basemapId: "streets-vector"
+      }
+    }
+  },
+  {
+    keywords: [
+      "topografik haritaya gec",
+      "topo basemap",
+      "topographic basemap",
+      "haritayi topografik yap"
+    ],
+    response: {
+      type: "map_action",
+      answer: "Basemap topografik haritaya al\u0131nd\u0131.",
+      mapAction: {
+        action: "change_basemap",
+        basemapId: "topo-vector"
+      }
+    }
+  },
+  {
+    keywords: [
+      "koyu haritaya gec",
+      "koyu basemap",
+      "dark basemap",
+      "dark gray basemap",
+      "haritayi koyu yap"
+    ],
+    response: {
+      type: "map_action",
+      answer: "Basemap koyu gri g\u00f6r\u00fcn\u00fcme al\u0131nd\u0131.",
+      mapAction: {
+        action: "change_basemap",
+        basemapId: "dark-gray-vector"
+      }
+    }
+  },
+  {
+    keywords: [
+      "gri haritaya gec",
+      "gray basemap",
+      "grey basemap",
+      "haritayi gri yap"
+    ],
+    response: {
+      type: "map_action",
+      answer: "Basemap gri g\u00f6r\u00fcn\u00fcme al\u0131nd\u0131.",
+      mapAction: {
+        action: "change_basemap",
+        basemapId: "gray-vector"
+      }
+    }
+  },
+  {
+    keywords: [
+      "okyanus haritasina gec",
+      "oceans basemap",
+      "ocean basemap",
+      "haritayi okyanus yap"
+    ],
+    response: {
+      type: "map_action",
+      answer: "Basemap okyanus g\u00f6r\u00fcn\u00fcme al\u0131nd\u0131.",
+      mapAction: {
+        action: "change_basemap",
+        basemapId: "oceans"
+      }
+    }
+  },
+  {
+    keywords: [
+      "osm haritaya gec",
+      "openstreetmap haritaya gec",
+      "openstreetmap basemap",
+      "haritayi osm yap"
+    ],
+    response: {
+      type: "map_action",
+      answer: "Basemap OpenStreetMap g\u00f6r\u00fcn\u00fcme al\u0131nd\u0131.",
+      mapAction: {
+        action: "change_basemap",
+        basemapId: "osm"
+      }
+    }
+  },
+  {
+    keywords: [
       "haritadaki isaretleri temizle",
       "isaretleri temizle",
       "markerlari temizle",

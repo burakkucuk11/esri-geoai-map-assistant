@@ -16,7 +16,18 @@ import { solveRoute, solveRouteForStops } from "../utils/routeService.js";
 import { MOCK_SERVICE_POINTS } from "../data/mockServicePoints.js";
 
 const TURKEY_CENTER = [35.2433, 38.9637];
+const DEFAULT_BASEMAP_ID = "topo-vector";
 const DEFAULT_LABELS = getDictionary("tr").map;
+const SUPPORTED_BASEMAP_IDS = new Set([
+  "topo-vector",
+  "streets-vector",
+  "satellite",
+  "hybrid",
+  "dark-gray-vector",
+  "gray-vector",
+  "oceans",
+  "osm"
+]);
 
 function escapeHtml(value) {
   return String(value)
@@ -119,7 +130,7 @@ const GeoMapView = forwardRef(function GeoMapView(
     serviceLayerRef.current = serviceLayer;
 
     const map = new Map({
-      basemap: "topo-vector",
+      basemap: DEFAULT_BASEMAP_ID,
       layers: [serviceLayer, routeLayer, markerLayer]
     });
 
@@ -359,6 +370,27 @@ const GeoMapView = forwardRef(function GeoMapView(
 
     async routeLocationsOnMap(locations) {
       return drawRouteForStops(locations);
+    },
+
+    changeBasemap(basemapId) {
+      const view = viewRef.current;
+      const currentLabels = labelsRef.current;
+      const normalizedBasemapId = String(basemapId || "").trim();
+
+      if (!view) {
+        throw new Error(currentLabels.mapNotReady);
+      }
+
+      if (!SUPPORTED_BASEMAP_IDS.has(normalizedBasemapId)) {
+        throw new Error(currentLabels.unsupportedBasemap);
+      }
+
+      view.map.basemap = normalizedBasemapId;
+
+      return {
+        basemapId: normalizedBasemapId,
+        answer: currentLabels.basemapChanged(currentLabels.basemaps[normalizedBasemapId])
+      };
     },
 
     clearGraphics() {

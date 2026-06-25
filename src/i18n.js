@@ -30,6 +30,20 @@ export const dictionaries = {
       unavailable: "alınamadı",
       unknownError: "Rota bilgisi alınamadı."
     },
+    basemapControl: {
+      label: "Altlık harita",
+      selectLabel: "Altlık harita seç",
+      options: {
+        "topo-vector": "Topografik",
+        "streets-vector": "Sokak",
+        satellite: "Uydu",
+        hybrid: "Hibrit",
+        "dark-gray-vector": "Koyu gri",
+        "gray-vector": "Gri",
+        oceans: "Okyanus",
+        osm: "OpenStreetMap"
+      }
+    },
     panel: {
       ariaLabel: "GeoAI asistan paneli",
       title: "GeoAI Asistan",
@@ -76,6 +90,18 @@ export const dictionaries = {
       popupDescription: "Açıklama",
       mapNotReady: "Harita henüz hazır değil.",
       homeView: "Harita başlangıç görünümüne alındı.",
+      unsupportedBasemap: "Bu altlık harita desteklenmiyor.",
+      basemapChanged: (name) => `Altlık harita ${name} olarak değiştirildi.`,
+      basemaps: {
+        "topo-vector": "Topografik",
+        "streets-vector": "Sokak",
+        satellite: "Uydu",
+        hybrid: "Hibrit",
+        "dark-gray-vector": "Koyu gri",
+        "gray-vector": "Gri",
+        oceans: "Okyanus",
+        osm: "OpenStreetMap"
+      },
       shownOnMap: (name) => `${name} haritada gösterildi.`,
       multipleLocationsShown: (count) => `${count} konum haritada numaralı olarak gösterildi.`,
       sourceLabel: "Kaynak",
@@ -133,6 +159,20 @@ export const dictionaries = {
       unavailable: "unavailable",
       unknownError: "Route information could not be loaded."
     },
+    basemapControl: {
+      label: "Basemap",
+      selectLabel: "Select basemap",
+      options: {
+        "topo-vector": "Topographic",
+        "streets-vector": "Streets",
+        satellite: "Satellite",
+        hybrid: "Hybrid",
+        "dark-gray-vector": "Dark gray",
+        "gray-vector": "Gray",
+        oceans: "Oceans",
+        osm: "OpenStreetMap"
+      }
+    },
     panel: {
       ariaLabel: "GeoAI assistant panel",
       title: "GeoAI Assistant",
@@ -179,6 +219,18 @@ export const dictionaries = {
       popupDescription: "Description",
       mapNotReady: "The map is not ready yet.",
       homeView: "The map returned to the home view.",
+      unsupportedBasemap: "This basemap is not supported.",
+      basemapChanged: (name) => `Basemap changed to ${name}.`,
+      basemaps: {
+        "topo-vector": "Topographic",
+        "streets-vector": "Streets",
+        satellite: "Satellite",
+        hybrid: "Hybrid",
+        "dark-gray-vector": "Dark gray",
+        "gray-vector": "Gray",
+        oceans: "Oceans",
+        osm: "OpenStreetMap"
+      },
       shownOnMap: (name) => `${name} was shown on the map.`,
       multipleLocationsShown: (count) => `${count} locations were shown on the map with numbers.`,
       sourceLabel: "Source",

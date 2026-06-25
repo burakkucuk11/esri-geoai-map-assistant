@@ -27,7 +27,8 @@ Ollama Cloud model
 - Built-in deterministic answers for common geography questions before LLM calls
 - Esri World Geocoding Service integration for location search
 - Marker, popup, route, and proximity-analysis helpers
-- `show_location`, `show_locations`, `geocode`, `clear_graphics`, and `zoom_home` map actions
+- Basemap selector and GeoAI basemap switching commands
+- `show_location`, `show_locations`, `change_basemap`, `geocode`, `clear_graphics`, and `zoom_home` map actions
 - Clear user-facing errors for missing or rejected Esri API keys
 - Vite proxy setup so the frontend can call the backend through `/api`
 
@@ -190,6 +191,7 @@ English:
 - What is the largest lake in the world?
 - What is the highest mountain in the world?
 - Show Ankara on the map
+- Change basemap to satellite
 - Clear the map markers
 - Reset map view
 - Delete all records in the active layer
@@ -200,6 +202,7 @@ Expected behavior:
 - Unknown safe questions are sent to the configured Ollama provider.
 - `show_location` zooms to coordinates, adds a marker, and opens a popup.
 - `show_locations` adds multiple numbered markers and zooms to the full set.
+- `change_basemap` changes the map basemap without touching markers or routes.
 - `geocode` searches through Esri geocoding, zooms, and adds a marker.
 - `clear_graphics` clears temporary graphics.
 - `zoom_home` returns the map to the initial Turkey view.
