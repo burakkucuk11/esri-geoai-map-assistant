@@ -62,6 +62,21 @@ function pointSymbol(color, size = 14) {
   };
 }
 
+function markerNumberSymbol(number) {
+  return {
+    type: "text",
+    text: String(number),
+    color: "#ffffff",
+    font: {
+      family: "Arial",
+      size: 11,
+      weight: "bold"
+    },
+    horizontalAlignment: "center",
+    verticalAlignment: "middle"
+  };
+}
+
 function buildPopupContent(location, labels) {
   const details = location.details ?? [];
   const rows = [
@@ -207,6 +222,83 @@ const GeoMapView = forwardRef(function GeoMapView(
     return graphic;
   }
 
+  async function addNumberedLocationGraphics({ locations, description, zoom }) {
+    const view = viewRef.current;
+    const markerLayer = markerLayerRef.current;
+    const currentLabels = labelsRef.current;
+
+    if (!view || !markerLayer) {
+      throw new Error(currentLabels.mapNotReady);
+    }
+
+    markerLayer.removeAll();
+
+    const markerGraphics = [];
+    const allGraphics = [];
+
+    locations.forEach((location, index) => {
+      const order = index + 1;
+      const point = createPoint(location);
+      const popupLocation = {
+        ...location,
+        name: `${order}. ${location.name}`,
+        description: location.description || description
+      };
+      const popupTemplate = {
+        title: popupLocation.name,
+        content: buildPopupContent(popupLocation, currentLabels)
+      };
+      const markerGraphic = new Graphic({
+        geometry: point,
+        symbol: pointSymbol("#0f766e", 24),
+        attributes: {
+          name: location.name,
+          order
+        },
+        popupTemplate
+      });
+      const numberGraphic = new Graphic({
+        geometry: point,
+        symbol: markerNumberSymbol(order),
+        attributes: {
+          name: location.name,
+          order
+        },
+        popupTemplate
+      });
+
+      markerGraphics.push(markerGraphic);
+      allGraphics.push(markerGraphic, numberGraphic);
+    });
+
+    markerLayer.addMany(allGraphics);
+
+    if (markerGraphics.length === 1) {
+      const location = locations[0];
+      await view.goTo(
+        {
+          center: [location.longitude, location.latitude],
+          zoom: zoom || location.zoom || 12
+        },
+        { duration: 750 }
+      );
+    } else {
+      await view.goTo(
+        {
+          target: markerGraphics,
+          padding: 90
+        },
+        { duration: 750 }
+      );
+    }
+
+    openPopup(view, markerGraphics[0], markerGraphics[0].geometry);
+
+    return {
+      answer: currentLabels.multipleLocationsShown(markerGraphics.length)
+    };
+  }
+
   useImperativeHandle(ref, () => ({
     async showPointOnMap(location) {
       await addLocationGraphic(location);
@@ -222,6 +314,10 @@ const GeoMapView = forwardRef(function GeoMapView(
       };
     },
 
+    async showLocationsOnMap(options) {
+      return addNumberedLocationGraphics(options);
+    },
+
     clearGraphics() {
       markerLayerRef.current?.removeAll();
       routeLayerRef.current?.removeAll();
@@ -235,6 +331,33 @@ const GeoMapView = forwardRef(function GeoMapView(
           view.popup?.close();
         }
       }
+    },
+
+    async zoomHome() {
+      const view = viewRef.current;
+      const currentLabels = labelsRef.current;
+
+      if (!view) {
+        throw new Error(currentLabels.mapNotReady);
+      }
+
+      if (typeof view.closePopup === "function") {
+        view.closePopup();
+      } else {
+        view.popup?.close();
+      }
+
+      await view.goTo(
+        {
+          center: TURKEY_CENTER,
+          zoom: 6
+        },
+        { duration: 750 }
+      );
+
+      return {
+        answer: currentLabels.homeView
+      };
     },
 
     async geocodeAndShow(query) {

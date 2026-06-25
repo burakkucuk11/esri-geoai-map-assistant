@@ -43,6 +43,7 @@ export const dictionaries = {
       invalidCoordinates:
         "GeoAI konum göstermek istedi, ancak geçerli koordinat döndürmedi.",
       clearGraphics: "Haritadaki geçici grafikler temizlendi.",
+      zoomHome: "Harita başlangıç görünümüne alındı.",
       unsupportedAction:
         "GeoAI isteği yorumladı, ancak bu harita aksiyonu desteklenmiyor.",
       unexpectedError: "İşlem sırasında beklenmeyen bir hata oluştu."
@@ -61,7 +62,9 @@ export const dictionaries = {
       popupName: "Ad",
       popupDescription: "Açıklama",
       mapNotReady: "Harita henüz hazır değil.",
+      homeView: "Harita başlangıç görünümüne alındı.",
       shownOnMap: (name) => `${name} haritada gösterildi.`,
+      multipleLocationsShown: (count) => `${count} konum haritada numaralı olarak gösterildi.`,
       sourceLabel: "Kaynak",
       matchScoreLabel: "Eşleşme puanı",
       nearestOriginPopup: "Yakınlık analizi başlangıç noktası",
@@ -130,6 +133,7 @@ export const dictionaries = {
       invalidCoordinates:
         "GeoAI tried to show a location, but did not return valid coordinates.",
       clearGraphics: "Temporary map graphics have been cleared.",
+      zoomHome: "The map returned to the home view.",
       unsupportedAction:
         "GeoAI understood the request, but this map action is not supported.",
       unexpectedError: "An unexpected error occurred during the operation."
@@ -148,7 +152,9 @@ export const dictionaries = {
       popupName: "Name",
       popupDescription: "Description",
       mapNotReady: "The map is not ready yet.",
+      homeView: "The map returned to the home view.",
       shownOnMap: (name) => `${name} was shown on the map.`,
+      multipleLocationsShown: (count) => `${count} locations were shown on the map with numbers.`,
       sourceLabel: "Source",
       matchScoreLabel: "Match score",
       nearestOriginPopup: "Proximity analysis start point",

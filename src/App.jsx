@@ -66,6 +66,29 @@ export default function App() {
 
     const mapActions = getMapActions();
 
+    if (mapAction.action === "show_locations") {
+      const locations = Array.isArray(mapAction.locations)
+        ? mapAction.locations.filter(hasCoordinates).map((location) => ({
+            ...location,
+            latitude: Number(location.latitude),
+            longitude: Number(location.longitude),
+            zoom: Number(location.zoom) || undefined
+          }))
+        : [];
+
+      if (!locations.length) {
+        throw new Error(t.messages.invalidCoordinates);
+      }
+
+      await mapActions.showLocationsOnMap({
+        locations,
+        description: result.answer,
+        zoom: Number(mapAction.zoom) || undefined
+      });
+
+      return result.answer;
+    }
+
     if (mapAction.action === "show_location") {
       if (!hasCoordinates(mapAction)) {
         throw new Error(t.messages.invalidCoordinates);
@@ -90,6 +113,11 @@ export default function App() {
     if (mapAction.action === "clear_graphics") {
       mapActions.clearGraphics();
       return result.answer || t.messages.clearGraphics;
+    }
+
+    if (mapAction.action === "zoom_home") {
+      await mapActions.zoomHome();
+      return result.answer || t.messages.zoomHome;
     }
 
     return result.answer || t.messages.unsupportedAction;

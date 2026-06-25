@@ -1,8 +1,8 @@
 # GeoAI Esri Map Assistant
 
-A React + Vite map assistant powered by ArcGIS Maps SDK for JavaScript, a Node.js/Express backend, and a local Ollama `qwen2.5:7b` model.
+A React + Vite map assistant powered by ArcGIS Maps SDK for JavaScript, a Node.js/Express backend, and Ollama Cloud by default.
 
-The frontend talks only to the Express backend for GeoAI requests. Ollama is called from the backend.
+The frontend talks only to the Express backend for GeoAI requests. Ollama API keys are used only by the backend.
 
 ```txt
 React + ArcGIS Maps SDK frontend
@@ -11,9 +11,9 @@ React + ArcGIS Maps SDK frontend
         v
 Node.js / Express backend
         |
-        | http://localhost:11434/api/generate
+        | https://ollama.com/api/chat
         v
-Ollama qwen2.5:7b
+Ollama Cloud model
 ```
 
 ## Features
@@ -21,10 +21,13 @@ Ollama qwen2.5:7b
 - Esri MapView centered on Turkey
 - GeoAI assistant panel
 - Turkish UI by default, with an English language switcher
-- Local Ollama `qwen2.5:7b` JSON action planning through `/api/geoai`
-- Built-in deterministic answers for common geography questions
+- Ollama Cloud JSON action planning through `/api/geoai`
+- Optional local Ollama fallback
+- `mock` provider mode for deterministic local responses without an LLM call
+- Built-in deterministic answers for common geography questions before LLM calls
 - Esri World Geocoding Service integration for location search
 - Marker, popup, route, and proximity-analysis helpers
+- `show_location`, `show_locations`, `geocode`, `clear_graphics`, and `zoom_home` map actions
 - Clear user-facing errors for missing or rejected Esri API keys
 - Vite proxy setup so the frontend can call the backend through `/api`
 
@@ -32,8 +35,8 @@ Ollama qwen2.5:7b
 
 - Node.js 18+
 - npm
-- Ollama running locally
-- Ollama model: `qwen2.5:7b`
+- Ollama Cloud API key
+- Ollama Cloud model name
 - A valid ArcGIS API key with Location Services enabled for geocoding/routing
 
 ## Setup
@@ -47,15 +50,85 @@ npm install
 Copy `.env.example` to `.env` and fill in your local values:
 
 ```env
-AI_PROVIDER=ollama
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=qwen2.5:7b
+AI_PROVIDER=ollama_cloud
+
+# Ollama Cloud
+OLLAMA_CLOUD_BASE_URL=https://ollama.com/api
+OLLAMA_API_KEY=your_ollama_cloud_api_key_here
+OLLAMA_MODEL=your_cloud_model_name_here
+
+# Local Ollama fallback
+OLLAMA_LOCAL_BASE_URL=http://localhost:11434/api
+OLLAMA_LOCAL_MODEL=qwen2.5:7b
+
+# Esri
 VITE_ARCGIS_API_KEY=your_esri_api_key_here
 VITE_GEOAI_API_URL=/api/geoai
+
+# Backend
 PORT=3001
 ```
 
-`OPENAI_API_KEY` is not required. This project uses Ollama locally.
+`OLLAMA_API_KEY` must not use a `VITE_` prefix. It is backend-only.
+
+## Ollama Cloud Kullanımı
+
+Bu proje varsayılan olarak Ollama Cloud API kullanır.
+
+`.env` dosyasında şu değerleri doldurun:
+
+```env
+AI_PROVIDER=ollama_cloud
+OLLAMA_CLOUD_BASE_URL=https://ollama.com/api
+OLLAMA_API_KEY=your_ollama_cloud_api_key_here
+OLLAMA_MODEL=your_cloud_model_name_here
+```
+
+Backend'i çalıştırın:
+
+```bash
+npm run server
+```
+
+Frontend'i çalıştırın:
+
+```bash
+npm run dev:frontend
+```
+
+Frontend ve backend'i birlikte çalıştırmak için:
+
+```bash
+npm run dev
+```
+
+## Local Ollama Kullanmak İsterseniz
+
+`.env` içinde şu ayarı kullanın:
+
+```env
+AI_PROVIDER=ollama_local
+OLLAMA_LOCAL_BASE_URL=http://localhost:11434/api
+OLLAMA_LOCAL_MODEL=qwen2.5:7b
+```
+
+Bu durumda bilgisayarda Ollama kurulu ve model indirilmiş olmalıdır.
+
+Optional local health check:
+
+```bash
+curl http://localhost:11434/api/chat -d "{\"model\":\"qwen2.5:7b\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"stream\":false}"
+```
+
+## Mock Provider
+
+LLM çağrısı yapmadan yalnızca yerel bilgi tabanı cevaplarını test etmek için:
+
+```env
+AI_PROVIDER=mock
+```
+
+Bu modda bilgi tabanında eşleşme yoksa kontrollü `unsupported` cevabı döner.
 
 ## ArcGIS API Key Notes
 
@@ -68,26 +141,6 @@ If you see an error like `VITE_ARCGIS_API_KEY was rejected by Esri`, the key exi
 - Location Services are enabled for the key.
 - The key is copied without extra spaces or quotes.
 - After changing `.env`, restart the dev server.
-
-## Prepare Ollama
-
-Check installed models:
-
-```bash
-ollama list
-```
-
-Install or start `qwen2.5:7b`:
-
-```bash
-ollama run qwen2.5:7b
-```
-
-Optional health check:
-
-```bash
-curl http://localhost:11434/api/generate -d "{\"model\":\"qwen2.5:7b\",\"prompt\":\"Hello\",\"stream\":false}"
-```
 
 ## Run The App
 
@@ -125,19 +178,32 @@ npm run dev:frontend
 
 Turkish:
 
+- Dünyanın en büyük gölü nerededir?
 - Türkiye'nin en yüksek dağı nedir?
-- Van Gölü nerede?
 - Ankara'yı haritada göster
 - Haritadaki işaretleri temizle
-- Türkiye'nin en uzun nehri nedir?
+- Haritayı başlangıç görünümüne döndür
+- Aktif katmandaki tüm verileri sil
 
 English:
 
-- What is the highest mountain in Turkey?
-- Where is Lake Van?
+- What is the largest lake in the world?
+- What is the highest mountain in the world?
 - Show Ankara on the map
 - Clear the map markers
-- What is the longest river in Turkey?
+- Reset map view
+- Delete all records in the active layer
+
+Expected behavior:
+
+- Known geography questions are answered from `GeoKnowledgeBase` first.
+- Unknown safe questions are sent to the configured Ollama provider.
+- `show_location` zooms to coordinates, adds a marker, and opens a popup.
+- `show_locations` adds multiple numbered markers and zooms to the full set.
+- `geocode` searches through Esri geocoding, zooms, and adds a marker.
+- `clear_graphics` clears temporary graphics.
+- `zoom_home` returns the map to the initial Turkey view.
+- Dangerous data mutation requests return `unsupported` and do not touch data.
 
 ## Project Structure
 
@@ -159,10 +225,11 @@ src/
   main.jsx
   styles.css
 server/
+  data/
+    geoKnowledgeBase.js
   routes/
     geoai.js
   services/
-    geoKnowledgeGuard.js
     ollamaService.js
   index.js
 scripts/
