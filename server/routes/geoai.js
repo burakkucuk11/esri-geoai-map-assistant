@@ -14,16 +14,36 @@ const routeMessages = {
     mockUnsupported:
       "Bu soru yerel bilgi taban\u0131nda bulunamad\u0131. AI_PROVIDER=mock oldu\u011fu i\u00e7in LLM'e istek g\u00f6nderilmedi.",
     serviceError:
-      "GeoAI servisi \u00e7al\u0131\u015f\u0131rken hata olu\u015ftu. Ollama Cloud API key, model ad\u0131 ve ba\u011flant\u0131 ayarlar\u0131n\u0131 kontrol edin."
+      "GeoAI servisi \u00e7al\u0131\u015f\u0131rken hata olu\u015ftu. OpenAI uyumlu API adresi, model ad\u0131 ve ba\u011flant\u0131 ayarlar\u0131n\u0131 kontrol edin."
   },
   en: {
     invalidMessage: "A valid message was not provided.",
     mockUnsupported:
       "This question was not found in the local knowledge base. AI_PROVIDER=mock is active, so no LLM request was sent.",
     serviceError:
-      "The GeoAI service failed while processing the request. Check the Ollama Cloud API key, model name, and connection settings."
+      "The GeoAI service failed while processing the request. Check the OpenAI-compatible API URL, model name, and connection settings."
   }
 };
+
+function shouldUseLocalAnswer(localAnswer, provider) {
+  if (!localAnswer) {
+    return false;
+  }
+
+  if (provider === "mock") {
+    return true;
+  }
+
+  const action = localAnswer.response?.mapAction?.action;
+
+  return (
+    localAnswer.response?.type === "map_action" ||
+    action === "change_basemap" ||
+    action === "clear_graphics" ||
+    action === "geocode" ||
+    action === "zoom_home"
+  );
+}
 
 router.post("/", async (request, response) => {
   try {
@@ -46,13 +66,14 @@ router.post("/", async (request, response) => {
       return;
     }
 
+    const provider = getAIProvider();
     const localAnswer = findGeoKnowledgeAnswer(message);
-    if (localAnswer) {
+    if (shouldUseLocalAnswer(localAnswer, provider)) {
       response.json(localAnswer.response);
       return;
     }
 
-    if (getAIProvider() === "mock") {
+    if (provider === "mock") {
       response.json({
         type: "unsupported",
         answer: labels.mockUnsupported,

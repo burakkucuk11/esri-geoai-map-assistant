@@ -12,7 +12,7 @@ import Point from "@arcgis/core/geometry/Point.js";
 import Polyline from "@arcgis/core/geometry/Polyline.js";
 import { getDictionary } from "../i18n.js";
 import { geocodePlace } from "../utils/geocoder.js";
-import { solveRoute, solveRouteForStops } from "../utils/routeService.js";
+import { solveRoute, solveRouteSegments } from "../utils/routeService.js";
 import { MOCK_SERVICE_POINTS } from "../data/mockServicePoints.js";
 
 const TURKEY_CENTER = [35.2433, 38.9637];
@@ -28,6 +28,17 @@ const SUPPORTED_BASEMAP_IDS = new Set([
   "oceans",
   "osm"
 ]);
+const ROUTE_SEGMENT_COLORS = [
+  "#2563eb",
+  "#f97316",
+  "#16a34a",
+  "#dc2626",
+  "#7c3aed",
+  "#0891b2",
+  "#ca8a04",
+  "#db2777",
+  "#475569"
+];
 
 function escapeHtml(value) {
   return String(value)
@@ -99,6 +110,61 @@ function buildPopupContent(location, labels) {
       (detail) => `<strong>${escapeHtml(detail.label)}:</strong> ${escapeHtml(detail.value)}`
     )
   ].filter(Boolean);
+
+  return `<div class="geo-popup">${rows.map((row) => `<p>${row}</p>`).join("")}</div>`;
+}
+
+function formatDistanceKm(value, labels) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? `${numericValue.toFixed(1)} km` : labels.noDistance;
+}
+
+function formatDurationMinutes(value, labels) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? `${Math.round(numericValue)} dk` : labels.noDuration;
+}
+
+function getTravelModeLabel(mode, labels) {
+  return labels.travelModes?.[mode] ?? mode ?? labels.unknownTravelMode;
+}
+
+function getPolylineLabelPoint(geometry) {
+  const path = geometry?.paths?.find((candidate) => candidate.length);
+  const coordinate = path?.[Math.floor((path.length - 1) / 2)];
+
+  if (!coordinate) {
+    return null;
+  }
+
+  return new Point({
+    x: coordinate[0],
+    y: coordinate[1],
+    spatialReference: geometry.spatialReference
+  });
+}
+
+function routeLabelSymbol(text, color) {
+  return {
+    type: "text",
+    text,
+    color,
+    haloColor: "#ffffff",
+    haloSize: 2.5,
+    yoffset: -10,
+    font: {
+      family: "Arial",
+      size: 10,
+      weight: "bold"
+    }
+  };
+}
+
+function buildRouteSegmentPopupContent(segment, labels) {
+  const rows = [
+    `<strong>${escapeHtml(labels.distanceLabel)}:</strong> ${escapeHtml(segment.distanceText)}`,
+    `<strong>${escapeHtml(labels.durationLabel)}:</strong> ${escapeHtml(segment.durationText)}`,
+    `<strong>${escapeHtml(labels.travelModeLabel)}:</strong> ${escapeHtml(segment.modeText)}`
+  ];
 
   return `<div class="geo-popup">${rows.map((row) => `<p>${row}</p>`).join("")}</div>`;
 }
@@ -319,23 +385,75 @@ const GeoMapView = forwardRef(function GeoMapView(
       throw new Error(currentLabels.mapNotReady);
     }
 
-    const routeResult = await solveRouteForStops(locations, currentLabels.auth);
-    const routeGraphic = routeResult.routeGraphic;
+    const routeResult = await solveRouteSegments(locations, currentLabels.auth);
+    const routeGraphics = [];
+    const labelGraphics = [];
+    const segments = routeResult.segments.map((segment, index) => {
+      const color = ROUTE_SEGMENT_COLORS[index % ROUTE_SEGMENT_COLORS.length];
+      const distanceText = formatDistanceKm(segment.totalLengthKm, currentLabels);
+      const durationText = formatDurationMinutes(segment.totalTimeMinutes, currentLabels);
+      const modeText = getTravelModeLabel(segment.travelMode, currentLabels);
+      const segmentSummary = {
+        fromIndex: segment.fromIndex,
+        toIndex: segment.toIndex,
+        fromName: segment.from.name,
+        toName: segment.to.name,
+        totalLengthKm: segment.totalLengthKm,
+        totalTimeMinutes: segment.totalTimeMinutes,
+        travelMode: segment.travelMode,
+        color,
+        distanceText,
+        durationText,
+        modeText
+      };
+      const popupTemplate = {
+        title: currentLabels.routeSegmentTitle(segmentSummary),
+        content: buildRouteSegmentPopupContent(segmentSummary, currentLabels)
+      };
 
-    routeGraphic.symbol = {
-      type: "simple-line",
-      color: "#f97316",
-      width: 5,
-      cap: "round",
-      join: "round"
-    };
+      segment.routeGraphic.symbol = {
+        type: "simple-line",
+        color,
+        width: 5,
+        cap: "round",
+        join: "round"
+      };
+      segment.routeGraphic.attributes = {
+        fromIndex: segment.fromIndex,
+        toIndex: segment.toIndex,
+        fromName: segment.from.name,
+        toName: segment.to.name,
+        distanceText,
+        durationText,
+        modeText
+      };
+      segment.routeGraphic.popupTemplate = popupTemplate;
+      routeGraphics.push(segment.routeGraphic);
+
+      const labelPoint = getPolylineLabelPoint(segment.routeGraphic.geometry);
+      if (labelPoint) {
+        labelGraphics.push(
+          new Graphic({
+            geometry: labelPoint,
+            symbol: routeLabelSymbol(
+              currentLabels.routeSegmentMapLabel(segmentSummary),
+              color
+            ),
+            attributes: segment.routeGraphic.attributes,
+            popupTemplate
+          })
+        );
+      }
+
+      return segmentSummary;
+    });
 
     routeLayer.removeAll();
-    routeLayer.add(routeGraphic);
+    routeLayer.addMany([...routeGraphics, ...labelGraphics]);
 
     await view.goTo(
       {
-        target: routeGraphic.geometry,
+        target: routeGraphics,
         padding: 110
       },
       { duration: 750 }
@@ -345,6 +463,8 @@ const GeoMapView = forwardRef(function GeoMapView(
       stopCount: routeResult.stops.length,
       totalLengthKm: routeResult.totalLengthKm,
       totalTimeMinutes: routeResult.totalTimeMinutes,
+      travelMode: routeResult.travelMode,
+      segments,
       stops: routeResult.stops
     };
   }

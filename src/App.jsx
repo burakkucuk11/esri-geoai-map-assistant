@@ -43,6 +43,10 @@ function formatDurationMinutes(value, fallback) {
   return Number.isFinite(numericValue) ? `${Math.round(numericValue)} dk` : fallback;
 }
 
+function formatTravelMode(value, t) {
+  return t.travelModes?.[value] ?? value ?? t.unavailable;
+}
+
 function BasemapControl({ basemapId, disabled, options, t, onChange }) {
   return (
     <section className="basemap-control" aria-label={t.label}>
@@ -111,7 +115,47 @@ function RouteSummaryPanel({ panel, t, onClose }) {
               <span>{t.duration}</span>
               <strong>{formatDurationMinutes(panel.totalTimeMinutes, t.unavailable)}</strong>
             </div>
+            <div>
+              <span>{t.mode}</span>
+              <strong>{formatTravelMode(panel.travelMode, t)}</strong>
+            </div>
           </div>
+          {Array.isArray(panel.segments) && panel.segments.length > 0 && (
+            <section className="route-segments" aria-label={t.segments}>
+              <h3>{t.segments}</h3>
+              <div className="route-segment-list">
+                {panel.segments.map((segment) => (
+                  <article
+                    className="route-segment-item"
+                    key={`${segment.fromIndex}-${segment.toIndex}-${segment.fromName}`}
+                    style={{ "--route-segment-color": segment.color }}
+                  >
+                    <span className="route-segment-swatch" aria-hidden="true" />
+                    <div className="route-segment-main">
+                      <strong>{t.segmentTitle(segment)}</strong>
+                      <span>
+                        {segment.fromName} - {segment.toName}
+                      </span>
+                    </div>
+                    <dl className="route-segment-metrics">
+                      <div>
+                        <dt>{t.distance}</dt>
+                        <dd>{formatDistanceKm(segment.totalLengthKm, t.unavailable)}</dd>
+                      </div>
+                      <div>
+                        <dt>{t.duration}</dt>
+                        <dd>{formatDurationMinutes(segment.totalTimeMinutes, t.unavailable)}</dd>
+                      </div>
+                      <div>
+                        <dt>{t.mode}</dt>
+                        <dd>{formatTravelMode(segment.travelMode, t)}</dd>
+                      </div>
+                    </dl>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
           <ol className="route-stop-list" aria-label={t.stops}>
             {panel.stops.map((stop, index) => (
               <li key={`${stop.name}-${index}`}>
@@ -246,7 +290,9 @@ export default function App() {
           status: "ready",
           stops: locations,
           totalLengthKm: routeResult.totalLengthKm,
-          totalTimeMinutes: routeResult.totalTimeMinutes
+          totalTimeMinutes: routeResult.totalTimeMinutes,
+          travelMode: routeResult.travelMode,
+          segments: routeResult.segments
         });
       } catch (error) {
         setRoutePanel({

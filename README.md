@@ -1,8 +1,8 @@
 # GeoAI Esri Map Assistant
 
-A React + Vite map assistant powered by ArcGIS Maps SDK for JavaScript, a Node.js/Express backend, and Ollama Cloud by default.
+A React + Vite map assistant powered by ArcGIS Maps SDK for JavaScript, a Node.js/Express backend, and an OpenAI-compatible LLM server by default.
 
-The frontend talks only to the Express backend for GeoAI requests. Ollama API keys are used only by the backend.
+The frontend talks only to the Express backend for GeoAI requests. LLM credentials and provider URLs are used only by the backend.
 
 ```txt
 React + ArcGIS Maps SDK frontend
@@ -11,9 +11,9 @@ React + ArcGIS Maps SDK frontend
         v
 Node.js / Express backend
         |
-        | https://ollama.com/api/chat
+        | OPENAI_BASE_URL + /chat/completions
         v
-Ollama Cloud model
+OpenAI-compatible model
 ```
 
 ## Features
@@ -21,10 +21,10 @@ Ollama Cloud model
 - Esri MapView centered on Turkey
 - GeoAI assistant panel
 - Turkish UI by default, with an English language switcher
-- Ollama Cloud JSON action planning through `/api/geoai`
-- Optional local Ollama fallback
+- OpenAI-compatible JSON action planning through `/api/geoai`
+- Optional Ollama Cloud or local Ollama fallback
 - `mock` provider mode for deterministic local responses without an LLM call
-- Built-in deterministic answers for common geography questions before LLM calls
+- Built-in deterministic handling for map control commands before LLM calls
 - Esri World Geocoding Service integration for location search
 - Marker, popup, route, and proximity-analysis helpers
 - Basemap selector and GeoAI basemap switching commands
@@ -36,8 +36,8 @@ Ollama Cloud model
 
 - Node.js 18+
 - npm
-- Ollama Cloud API key
-- Ollama Cloud model name
+- OpenAI-compatible LLM endpoint
+- OpenAI-compatible model name
 - A valid ArcGIS API key with Location Services enabled for geocoding/routing
 
 ## Setup
@@ -51,16 +51,23 @@ npm install
 Copy `.env.example` to `.env` and fill in your local values:
 
 ```env
-AI_PROVIDER=ollama_cloud
+AI_PROVIDER=openai_compatible
 
-# Ollama Cloud
-OLLAMA_CLOUD_BASE_URL=https://ollama.com/api
-OLLAMA_API_KEY=your_ollama_cloud_api_key_here
-OLLAMA_MODEL=your_cloud_model_name_here
+# OpenAI-compatible LLM server
+OPENAI_BASE_URL=https://your-llm-host.example.com/v1
+OPENAI_API_KEY=your_api_key_or_none
+OPENAI_MODEL=your_model_name
+
+# Ollama Cloud (disabled by default)
+# AI_PROVIDER=ollama_cloud
+# OLLAMA_CLOUD_BASE_URL=https://ollama.com/api
+# OLLAMA_API_KEY=your_ollama_cloud_api_key_here
+# OLLAMA_MODEL=your_cloud_model_name_here
 
 # Local Ollama fallback
-OLLAMA_LOCAL_BASE_URL=http://localhost:11434/api
-OLLAMA_LOCAL_MODEL=qwen2.5:7b
+# AI_PROVIDER=ollama_local
+# OLLAMA_LOCAL_BASE_URL=http://localhost:11434/api
+# OLLAMA_LOCAL_MODEL=qwen2.5:7b
 
 # Esri
 VITE_ARCGIS_API_KEY=your_esri_api_key_here
@@ -70,19 +77,19 @@ VITE_GEOAI_API_URL=/api/geoai
 PORT=3001
 ```
 
-`OLLAMA_API_KEY` must not use a `VITE_` prefix. It is backend-only.
+LLM API keys must not use a `VITE_` prefix. They are backend-only.
 
-## Ollama Cloud Kullanımı
+## OpenAI-Compatible Provider
 
-Bu proje varsayılan olarak Ollama Cloud API kullanır.
+Bu proje varsayilan olarak OpenAI uyumlu bir LLM endpoint'i kullanir. Sirket ici endpoint, model adi ve varsa API key degerlerini sadece `.env` icinde tutun; public repo'ya gercek host, model veya key yazmayin.
 
-`.env` dosyasında şu değerleri doldurun:
+`.env` dosyasinda su degerler aktif olmalidir:
 
 ```env
-AI_PROVIDER=ollama_cloud
-OLLAMA_CLOUD_BASE_URL=https://ollama.com/api
-OLLAMA_API_KEY=your_ollama_cloud_api_key_here
-OLLAMA_MODEL=your_cloud_model_name_here
+AI_PROVIDER=openai_compatible
+OPENAI_BASE_URL=https://your-llm-host.example.com/v1
+OPENAI_API_KEY=your_api_key_or_none
+OPENAI_MODEL=your_model_name
 ```
 
 Backend'i çalıştırın:
@@ -103,9 +110,18 @@ Frontend ve backend'i birlikte çalıştırmak için:
 npm run dev
 ```
 
-## Local Ollama Kullanmak İsterseniz
+## Ollama Kullanmak Isterseniz
 
-`.env` içinde şu ayarı kullanın:
+Ollama Cloud'a geri donmek isterseniz `.env` icindeki yorumlu satirlari acip su degerleri kullanin:
+
+```env
+AI_PROVIDER=ollama_cloud
+OLLAMA_CLOUD_BASE_URL=https://ollama.com/api
+OLLAMA_API_KEY=your_ollama_cloud_api_key_here
+OLLAMA_MODEL=your_cloud_model_name_here
+```
+
+Local Ollama icin su ayari kullanin:
 
 ```env
 AI_PROVIDER=ollama_local
@@ -198,8 +214,8 @@ English:
 
 Expected behavior:
 
-- Known geography questions are answered from `GeoKnowledgeBase` first.
-- Unknown safe questions are sent to the configured Ollama provider.
+- Map control commands are handled from `GeoKnowledgeBase` first.
+- Safe geography questions are sent to the configured AI provider.
 - `show_location` zooms to coordinates, adds a marker, and opens a popup.
 - `show_locations` adds multiple numbered markers and zooms to the full set.
 - `change_basemap` changes the map basemap without touching markers or routes.

@@ -1,6 +1,8 @@
 const DEFAULT_CLOUD_BASE_URL = "https://ollama.com/api";
 const DEFAULT_LOCAL_BASE_URL = "http://localhost:11434/api";
 const DEFAULT_LOCAL_MODEL = "qwen2.5:7b";
+const DEFAULT_OPENAI_BASE_URL = "";
+const DEFAULT_OPENAI_MODEL = "";
 
 const SUPPORTED_RESPONSE_TYPES = new Set(["geo_answer", "map_action", "unsupported"]);
 const SUPPORTED_MAP_ACTIONS = new Set([
@@ -45,11 +47,15 @@ const BASEMAP_ALIASES = new Map([
 ]);
 
 export function getAIProvider() {
-  const provider = (process.env.AI_PROVIDER || "ollama_cloud").trim().toLowerCase();
+  const provider = (process.env.AI_PROVIDER || "openai_compatible").trim().toLowerCase();
 
   // Backward-compatible alias for old local-only .env files.
   if (provider === "ollama") {
     return "ollama_local";
+  }
+
+  if (provider === "openai") {
+    return "openai_compatible";
   }
 
   return provider;
@@ -64,14 +70,39 @@ function normalizeApiBaseUrl(value) {
   return trimmed.endsWith("/api") ? trimmed : `${trimmed}/api`;
 }
 
+function normalizeOpenAIBaseUrl(value) {
+  let trimmed = String(value || "").trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.endsWith("/chat/completions")) {
+    trimmed = trimmed.slice(0, -"/chat/completions".length);
+  }
+
+  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
+}
+
 export function getOllamaConfig(provider = getAIProvider()) {
+  if (provider === "openai_compatible") {
+    return {
+      provider,
+      baseUrl: normalizeOpenAIBaseUrl(process.env.OPENAI_BASE_URL || DEFAULT_OPENAI_BASE_URL),
+      model: process.env.OPENAI_MODEL?.trim() || process.env.LLM_NAME?.trim() || DEFAULT_OPENAI_MODEL,
+      apiKey: process.env.OPENAI_API_KEY?.trim() || process.env.API_KEY?.trim() || "",
+      requiresAuth: false,
+      protocol: "openai_compatible"
+    };
+  }
+
   if (provider === "ollama_cloud") {
     return {
       provider,
       baseUrl: normalizeApiBaseUrl(process.env.OLLAMA_CLOUD_BASE_URL || DEFAULT_CLOUD_BASE_URL),
       model: process.env.OLLAMA_MODEL?.trim(),
       apiKey: process.env.OLLAMA_API_KEY?.trim(),
-      requiresAuth: true
+      requiresAuth: true,
+      protocol: "ollama"
     };
   }
 
@@ -83,7 +114,8 @@ export function getOllamaConfig(provider = getAIProvider()) {
       ),
       model: process.env.OLLAMA_LOCAL_MODEL?.trim() || DEFAULT_LOCAL_MODEL,
       apiKey: null,
-      requiresAuth: false
+      requiresAuth: false,
+      protocol: "ollama"
     };
   }
 
@@ -230,13 +262,33 @@ Multiple location example:
 `;
 }
 
-function parseOllamaJsonResponse(rawResponse) {
+function getProviderName(config) {
+  if (config?.provider === "openai_compatible") {
+    return "OpenAI uyumlu AI servisi";
+  }
+
+  if (config?.provider === "ollama_cloud") {
+    return "Ollama Cloud";
+  }
+
+  if (config?.provider === "ollama_local") {
+    return "Local Ollama";
+  }
+
+  return "AI servisi";
+}
+
+function shouldSendAuthorization(apiKey) {
+  return Boolean(apiKey && apiKey.trim() && apiKey.trim().toLowerCase() !== "none");
+}
+
+function parseProviderJsonResponse(rawResponse, providerName = "AI servisi") {
   if (rawResponse && typeof rawResponse === "object") {
     return rawResponse;
   }
 
   if (typeof rawResponse !== "string" || !rawResponse.trim()) {
-    throw new Error("Ollama bos cevap dondurdu.");
+    throw new Error(`${providerName} bos cevap dondurdu.`);
   }
 
   try {
@@ -244,11 +296,21 @@ function parseOllamaJsonResponse(rawResponse) {
   } catch {
     const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error(`Ollama gecerli JSON dondurmedi: ${rawResponse}`);
+      throw new Error(`${providerName} gecerli JSON dondurmedi: ${rawResponse}`);
     }
 
     return JSON.parse(jsonMatch[0]);
   }
+}
+
+function buildGeoAIUserPrompt(userMessage, context) {
+  return `
+User message:
+${userMessage}
+
+Application context:
+${JSON.stringify(context, null, 2)}
+`;
 }
 
 function normalizeBasemapId(value) {
@@ -370,22 +432,68 @@ function normalizeGeoAIResult(result) {
   };
 }
 
-export async function askOllamaGeoAI(userMessage, context = {}) {
-  const config = getOllamaConfig();
-
+function validateAIConfig(config) {
   if (!config) {
-    throw new Error("Gecerli Ollama provider bulunamadi.");
+    throw new Error("Gecerli AI provider bulunamadi.");
+  }
+
+  if (!config.baseUrl) {
+    throw new Error("AI provider base URL eksik.");
   }
 
   if (config.requiresAuth && !config.apiKey) {
-    throw new Error("OLLAMA_API_KEY eksik. Ollama Cloud kullanmak icin API key gerekli.");
+    throw new Error("AI provider API key eksik.");
   }
 
   if (!config.model) {
-    throw new Error("OLLAMA_MODEL eksik. Kullanilacak cloud model adini .env icine yaz.");
+    throw new Error("AI provider model adi eksik.");
+  }
+}
+
+async function askOpenAICompatibleGeoAI(config, userMessage, context, language) {
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  if (shouldSendAuthorization(config.apiKey)) {
+    headers.Authorization = `Bearer ${config.apiKey}`;
   }
 
-  const language = context.language === "en" ? "en" : "tr";
+  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        {
+          role: "system",
+          content: buildGeoAISystemPrompt(language)
+        },
+        {
+          role: "user",
+          content: buildGeoAIUserPrompt(userMessage, context)
+        }
+      ],
+      temperature: 0.1,
+      top_p: 0.8
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI uyumlu API hatasi: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const message = data?.choices?.[0]?.message;
+  const rawContent = Array.isArray(message?.content)
+    ? message.content.map((part) => part?.text || "").join("")
+    : message?.content || data?.choices?.[0]?.text || data?.message?.content || data?.response;
+
+  return normalizeGeoAIResult(parseProviderJsonResponse(rawContent, getProviderName(config)));
+}
+
+async function askNativeOllamaGeoAI(config, userMessage, context, language) {
   const headers = {
     "Content-Type": "application/json"
   };
@@ -406,13 +514,7 @@ export async function askOllamaGeoAI(userMessage, context = {}) {
         },
         {
           role: "user",
-          content: `
-User message:
-${userMessage}
-
-Application context:
-${JSON.stringify(context, null, 2)}
-`
+          content: buildGeoAIUserPrompt(userMessage, context)
         }
       ],
       stream: false,
@@ -432,5 +534,19 @@ ${JSON.stringify(context, null, 2)}
   const data = await response.json();
   const rawContent = data?.message?.content || data?.response;
 
-  return normalizeGeoAIResult(parseOllamaJsonResponse(rawContent));
+  return normalizeGeoAIResult(parseProviderJsonResponse(rawContent, getProviderName(config)));
+}
+
+export async function askOllamaGeoAI(userMessage, context = {}) {
+  const config = getOllamaConfig();
+
+  validateAIConfig(config);
+
+  const language = context.language === "en" ? "en" : "tr";
+
+  if (config.protocol === "openai_compatible") {
+    return askOpenAICompatibleGeoAI(config, userMessage, context, language);
+  }
+
+  return askNativeOllamaGeoAI(config, userMessage, context, language);
 }

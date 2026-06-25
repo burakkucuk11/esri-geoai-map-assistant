@@ -25,10 +25,17 @@ export const dictionaries = {
       errorTitle: "Rota çizilemedi",
       distance: "Mesafe",
       duration: "Süre",
+      mode: "Tip",
+      segments: "Rota parçaları",
+      segmentTitle: ({ fromIndex, toIndex }) => `${fromIndex} -> ${toIndex}`,
       stops: "Duraklar",
       close: "Rota panelini kapat",
       unavailable: "alınamadı",
-      unknownError: "Rota bilgisi alınamadı."
+      unknownError: "Rota bilgisi alınamadı.",
+      travelModes: {
+        driving: "Araba",
+        walking: "Yürüyüş"
+      }
     },
     basemapControl: {
       label: "Altlık harita",
@@ -119,6 +126,18 @@ export const dictionaries = {
       routeEnd: "Rota varışı",
       noDistance: "mesafe bilgisi alınamadı",
       noDuration: "süre bilgisi alınamadı",
+      distanceLabel: "Mesafe",
+      durationLabel: "Süre",
+      travelModeLabel: "Tip",
+      unknownTravelMode: "Bilinmiyor",
+      travelModes: {
+        driving: "Araba",
+        walking: "Yürüyüş"
+      },
+      routeSegmentTitle: ({ fromIndex, toIndex, fromName, toName }) =>
+        `${fromIndex} -> ${toIndex}: ${fromName} - ${toName}`,
+      routeSegmentMapLabel: ({ fromIndex, toIndex, durationText, modeText }) =>
+        `${fromIndex}-${toIndex} / ${durationText} / ${modeText}`,
       routeAnswer: ({ startName, finishName, distanceText, durationText }) =>
         `${startName} ile ${finishName} arasında rota çizildi. Mesafe: ${distanceText}, süre: ${durationText}.`,
       auth: {
@@ -154,10 +173,17 @@ export const dictionaries = {
       errorTitle: "Route could not be drawn",
       distance: "Distance",
       duration: "Duration",
+      mode: "Mode",
+      segments: "Route segments",
+      segmentTitle: ({ fromIndex, toIndex }) => `${fromIndex} -> ${toIndex}`,
       stops: "Stops",
       close: "Close route panel",
       unavailable: "unavailable",
-      unknownError: "Route information could not be loaded."
+      unknownError: "Route information could not be loaded.",
+      travelModes: {
+        driving: "Car",
+        walking: "Walking"
+      }
     },
     basemapControl: {
       label: "Basemap",
@@ -248,6 +274,18 @@ export const dictionaries = {
       routeEnd: "Route destination",
       noDistance: "distance unavailable",
       noDuration: "duration unavailable",
+      distanceLabel: "Distance",
+      durationLabel: "Duration",
+      travelModeLabel: "Mode",
+      unknownTravelMode: "Unknown",
+      travelModes: {
+        driving: "Car",
+        walking: "Walking"
+      },
+      routeSegmentTitle: ({ fromIndex, toIndex, fromName, toName }) =>
+        `${fromIndex} -> ${toIndex}: ${fromName} - ${toName}`,
+      routeSegmentMapLabel: ({ fromIndex, toIndex, durationText, modeText }) =>
+        `${fromIndex}-${toIndex} / ${durationText} / ${modeText}`,
       routeAnswer: ({ startName, finishName, distanceText, durationText }) =>
         `A route was drawn between ${startName} and ${finishName}. Distance: ${distanceText}, duration: ${durationText}.`,
       auth: {
