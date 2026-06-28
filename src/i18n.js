@@ -8,9 +8,7 @@ export const dictionaries = {
     examples: [
       "Türkiye'nin en yüksek dağı nedir?",
       "Ankara'yı haritada göster",
-      "Van Gölü nerede?",
-      "Haritadaki işaretleri temizle",
-      "Türkiye'nin en uzun nehri nedir?"
+      "Haritadaki işaretleri temizle"
     ],
     app: {
       mapStageLabel: "Harita alanı",
@@ -51,6 +49,12 @@ export const dictionaries = {
         osm: "OpenStreetMap"
       }
     },
+    dataset: {
+      uploading: (fileName) => `${fileName} yükleniyor...`,
+      loaded: (name, layerCount, previewCount) =>
+        `${name} yüklendi. ${layerCount} katman, ${previewCount} harita önizleme detayı hazır.`,
+      uploadError: "GDB yüklenirken hata oluştu."
+    },
     panel: {
       ariaLabel: "GeoAI asistan paneli",
       title: "GeoAI Asistan",
@@ -66,6 +70,14 @@ export const dictionaries = {
       questionLabel: "Coğrafi soru",
       placeholder: "Örn. Ankara'yı haritada göster",
       send: "Gönder",
+      datasetAriaLabel: "GDB veri yükleme",
+      datasetTitle: "GDB Verisi",
+      datasetEmpty: "Yüklü veri yok",
+      datasetActive: (layerCount, previewCount) =>
+        `${layerCount} katman, ${previewCount} önizleme detayı`,
+      datasetUpload: "GDB ZIP yükle",
+      datasetLayersLabel: "Yüklenen GDB katmanları",
+      datasetFeatureCount: (count) => `${count} detay`,
       languageSelectorLabel: "Dil seçimi",
       languageButtonTitle: (label) => `${label} diline geç`
     },
@@ -80,12 +92,16 @@ export const dictionaries = {
       zoomHome: "Harita başlangıç görünümüne alındı.",
       unsupportedAction:
         "GeoAI isteği yorumladı, ancak bu harita aksiyonu desteklenmiyor.",
+      noActiveDataset: "Önce bir GDB yükleyin.",
+      datasetNotLoaded: "GeoAI farklı bir dataset istedi, ancak o dataset şu anda yüklü değil.",
       unexpectedError: "İşlem sırasında beklenmeyen bir hata oluştu."
     },
     map: {
       markerLayerTitle: "Konum işaretleri",
       routeLayerTitle: "Rota çizimleri",
       serviceLayerTitle: "Yakınlık analizi",
+      datasetLayerTitle: "GDB verisi",
+      datasetHighlightLayerTitle: "GDB vurgusu",
       serviceTypes: {
         hospital: "hastane",
         pharmacy: "eczane",
@@ -95,7 +111,13 @@ export const dictionaries = {
       mapCenterName: "Harita merkezi",
       popupName: "Ad",
       popupDescription: "Açıklama",
+      objectIdLabel: "Object ID",
+      datasetLayerLabel: "Katman",
       mapNotReady: "Harita henüz hazır değil.",
+      datasetNoPreview: "GDB için harita önizlemesi bulunamadı.",
+      datasetNoMatchingFeatures: "Bu cevapla eşleşen harita detayı önizlemede bulunamadı.",
+      datasetShown: (name, count) => `${name} haritada gösterildi (${count} detay).`,
+      datasetHighlighted: (count) => `${count} detay haritada vurgulandı.`,
       homeView: "Harita başlangıç görünümüne alındı.",
       unsupportedBasemap: "Bu altlık harita desteklenmiyor.",
       basemapChanged: (name) => `Altlık harita ${name} olarak değiştirildi.`,
@@ -156,9 +178,7 @@ export const dictionaries = {
     examples: [
       "What is the highest mountain in Turkey?",
       "Show Ankara on the map",
-      "Where is Lake Van?",
-      "Clear the map markers",
-      "What is the longest river in Turkey?"
+      "Clear the map markers"
     ],
     app: {
       mapStageLabel: "Map area",
@@ -199,6 +219,12 @@ export const dictionaries = {
         osm: "OpenStreetMap"
       }
     },
+    dataset: {
+      uploading: (fileName) => `Uploading ${fileName}...`,
+      loaded: (name, layerCount, previewCount) =>
+        `${name} uploaded. ${layerCount} layers and ${previewCount} map preview features are ready.`,
+      uploadError: "An error occurred while uploading the GDB."
+    },
     panel: {
       ariaLabel: "GeoAI assistant panel",
       title: "GeoAI Assistant",
@@ -214,6 +240,14 @@ export const dictionaries = {
       questionLabel: "Geographic question",
       placeholder: "E.g. Show Ankara on the map",
       send: "Send",
+      datasetAriaLabel: "GDB data upload",
+      datasetTitle: "GDB Data",
+      datasetEmpty: "No data loaded",
+      datasetActive: (layerCount, previewCount) =>
+        `${layerCount} layers, ${previewCount} preview features`,
+      datasetUpload: "Upload GDB ZIP",
+      datasetLayersLabel: "Uploaded GDB layers",
+      datasetFeatureCount: (count) => `${count} features`,
       languageSelectorLabel: "Language selection",
       languageButtonTitle: (label) => `Switch to ${label}`
     },
@@ -228,12 +262,16 @@ export const dictionaries = {
       zoomHome: "The map returned to the home view.",
       unsupportedAction:
         "GeoAI understood the request, but this map action is not supported.",
+      noActiveDataset: "Upload a GDB first.",
+      datasetNotLoaded: "GeoAI requested a different dataset, but it is not currently loaded.",
       unexpectedError: "An unexpected error occurred during the operation."
     },
     map: {
       markerLayerTitle: "Location markers",
       routeLayerTitle: "Route drawings",
       serviceLayerTitle: "Proximity analysis",
+      datasetLayerTitle: "GDB data",
+      datasetHighlightLayerTitle: "GDB highlight",
       serviceTypes: {
         hospital: "hospital",
         pharmacy: "pharmacy",
@@ -243,7 +281,13 @@ export const dictionaries = {
       mapCenterName: "Map center",
       popupName: "Name",
       popupDescription: "Description",
+      objectIdLabel: "Object ID",
+      datasetLayerLabel: "Layer",
       mapNotReady: "The map is not ready yet.",
+      datasetNoPreview: "No map preview was found for this GDB.",
+      datasetNoMatchingFeatures: "No preview feature matched this answer.",
+      datasetShown: (name, count) => `${name} was shown on the map (${count} features).`,
+      datasetHighlighted: (count) => `${count} features were highlighted on the map.`,
       homeView: "The map returned to the home view.",
       unsupportedBasemap: "This basemap is not supported.",
       basemapChanged: (name) => `Basemap changed to ${name}.`,

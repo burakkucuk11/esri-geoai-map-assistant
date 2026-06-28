@@ -1,6 +1,7 @@
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
+import datasetsRouter from "./routes/datasets.js";
 import geoaiRouter from "./routes/geoai.js";
 
 dotenv.config();
@@ -19,6 +20,7 @@ app.get("/api/health", (_request, response) => {
 });
 
 app.use("/api/geoai", geoaiRouter);
+app.use("/api/datasets", datasetsRouter);
 
 app.listen(port, () => {
   console.log(`GeoAI backend http://localhost:${port} üzerinde çalışıyor.`);

@@ -8,6 +8,9 @@ const SUPPORTED_RESPONSE_TYPES = new Set(["geo_answer", "map_action", "unsupport
 const SUPPORTED_MAP_ACTIONS = new Set([
   "show_location",
   "show_locations",
+  "show_dataset_layer",
+  "highlight_dataset_layer",
+  "highlight_dataset_features",
   "change_basemap",
   "geocode",
   "clear_graphics",
@@ -161,12 +164,15 @@ Supported JSON shape:
   "type": "geo_answer" | "map_action" | "unsupported",
   "answer": "short and correct answer",
   "mapAction": {
-    "action": "show_location" | "show_locations" | "change_basemap" | "geocode" | "clear_graphics" | "zoom_home",
+    "action": "show_location" | "show_locations" | "show_dataset_layer" | "highlight_dataset_layer" | "highlight_dataset_features" | "change_basemap" | "geocode" | "clear_graphics" | "zoom_home",
     "name": "place name",
     "latitude": number,
     "longitude": number,
     "zoom": number,
     "query": "place to geocode",
+    "datasetId": "uploaded dataset id from Application context",
+    "layerId": "uploaded layer id from Application context",
+    "objectIds": [1, 2, 3],
     "basemapId": "topo-vector" | "streets-vector" | "satellite" | "hybrid" | "dark-gray-vector" | "gray-vector" | "oceans" | "osm",
     "locations": [
       {
@@ -188,6 +194,16 @@ If the user asks for multiple places, routes, stops, attractions, recommended pl
 - every location must include name, latitude, longitude, and optionally description.
 - keep locations in the same order as the answer list.
 - do not use show_locations if you are not confident about the coordinates.
+
+If Application context contains availableDatasets or availableLayers:
+- Treat them as uploaded local GIS data metadata.
+- You may answer questions about layer names, field names, feature counts, geometry types, and sample attributes using only that context.
+- If the answer is about a whole uploaded layer and it should be shown on the map, use action: "show_dataset_layer".
+- If the answer identifies a relevant uploaded layer, use action: "highlight_dataset_layer" with datasetId and layerId.
+- If sampleFeatures contains exact objectId values for the answer, use action: "highlight_dataset_features" with datasetId, layerId, and objectIds.
+- Do not invent datasetId, layerId, field names, feature counts, or objectIds.
+- Do not claim full spatial analysis was performed if only metadata/sample features are available.
+- If the question requires full database/spatial analysis that is not present in context, answer that the data must be queried through the backend/PostGIS analysis tools and return mapAction null.
 
 If a place name is known but coordinates are uncertain:
 - use action: "geocode".
@@ -402,6 +418,35 @@ function normalizeGeoAIResult(result) {
     }
   }
 
+  if (
+    mapAction?.action === "show_dataset_layer" ||
+    mapAction?.action === "highlight_dataset_layer" ||
+    mapAction?.action === "highlight_dataset_features"
+  ) {
+    const datasetId = String(mapAction.datasetId || "").trim();
+    const layerId = String(mapAction.layerId || "").trim();
+    const objectIds = Array.isArray(mapAction.objectIds)
+      ? mapAction.objectIds
+          .map((objectId) =>
+            typeof objectId === "number" || typeof objectId === "string"
+              ? String(objectId).trim()
+              : ""
+          )
+          .filter(Boolean)
+      : [];
+
+    if (!datasetId || !layerId) {
+      mapAction = null;
+    } else {
+      mapAction = {
+        action: mapAction.action,
+        datasetId,
+        layerId,
+        objectIds
+      };
+    }
+  }
+
   if (mapAction?.action === "geocode") {
     const query = String(mapAction.query || mapAction.name || "").trim();
     mapAction = query ? { action: "geocode", query } : null;
@@ -549,4 +594,100 @@ export async function askOllamaGeoAI(userMessage, context = {}) {
   }
 
   return askNativeOllamaGeoAI(config, userMessage, context, language);
+}
+
+export async function askProviderJson({
+  systemPrompt,
+  userPrompt,
+  temperature = 0.1,
+  topP = 0.8
+}) {
+  const config = getOllamaConfig();
+
+  validateAIConfig(config);
+
+  if (config.protocol === "openai_compatible") {
+    const headers = {
+      "Content-Type": "application/json"
+    };
+
+    if (shouldSendAuthorization(config.apiKey)) {
+      headers.Authorization = `Bearer ${config.apiKey}`;
+    }
+
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt
+          },
+          {
+            role: "user",
+            content: userPrompt
+          }
+        ],
+        temperature,
+        top_p: topP
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI uyumlu API hatasi: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    const message = data?.choices?.[0]?.message;
+    const rawContent = Array.isArray(message?.content)
+      ? message.content.map((part) => part?.text || "").join("")
+      : message?.content || data?.choices?.[0]?.text || data?.message?.content || data?.response;
+
+    return parseProviderJsonResponse(rawContent, getProviderName(config));
+  }
+
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  if (config.requiresAuth) {
+    headers.Authorization = `Bearer ${config.apiKey}`;
+  }
+
+  const response = await fetch(`${config.baseUrl}/chat`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        {
+          role: "user",
+          content: userPrompt
+        }
+      ],
+      stream: false,
+      format: "json",
+      options: {
+        temperature,
+        top_p: topP
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Ollama API hatasi: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const rawContent = data?.message?.content || data?.response;
+
+  return parseProviderJsonResponse(rawContent, getProviderName(config));
 }

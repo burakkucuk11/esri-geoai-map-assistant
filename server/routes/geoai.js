@@ -4,6 +4,7 @@ import {
   getUnsafeGeoAIResponse,
   isUnsafeGeoRequest
 } from "../data/geoKnowledgeBase.js";
+import { tryAnswerDatasetQuestion } from "../services/datasetAnalysisService.js";
 import { askOllamaGeoAI, getAIProvider } from "../services/ollamaService.js";
 
 const router = express.Router();
@@ -70,6 +71,15 @@ router.post("/", async (request, response) => {
     const localAnswer = findGeoKnowledgeAnswer(message);
     if (shouldUseLocalAnswer(localAnswer, provider)) {
       response.json(localAnswer.response);
+      return;
+    }
+
+    const datasetAnswer = await tryAnswerDatasetQuestion(message, {
+      ...normalizedContext,
+      language
+    });
+    if (datasetAnswer) {
+      response.json(datasetAnswer);
       return;
     }
 

@@ -1,13 +1,32 @@
 import { useEffect, useRef } from "react";
 import {
   AlertTriangle,
+  ChevronDown,
+  Database,
   Languages,
   Loader2,
   MapPin,
   MessageSquareText,
   Send,
-  Sparkles
+  Sparkles,
+  Upload
 } from "lucide-react";
+
+const DATASET_LAYER_COLORS = [
+  "#0f766e",
+  "#2563eb",
+  "#f97316",
+  "#16a34a",
+  "#7c3aed",
+  "#dc2626",
+  "#0891b2",
+  "#ca8a04",
+  "#db2777"
+];
+
+function getDatasetLayerColor(index) {
+  return DATASET_LAYER_COLORS[index % DATASET_LAYER_COLORS.length];
+}
 
 export default function GeoAIPanel({
   examples,
@@ -18,14 +37,22 @@ export default function GeoAIPanel({
   languageOptions,
   messages,
   selectedPoint,
+  activeDataset,
+  datasetUploadState,
   apiKeyMissing,
   t,
   onExampleClick,
+  onDatasetUpload,
   onInputChange,
   onLanguageChange,
   onSubmit
 }) {
   const messageListRef = useRef(null);
+  const activeDatasetLayers = Array.isArray(activeDataset?.layers) ? activeDataset.layers : [];
+  const activeDatasetLayerCount = activeDataset?.layerCount ?? activeDatasetLayers.length;
+  const activeDatasetPreviewCount =
+    activeDataset?.previewFeatureCount ??
+    activeDatasetLayers.reduce((total, layer) => total + (layer.previewFeatureCount || 0), 0);
 
   useEffect(() => {
     messageListRef.current?.scrollTo({
@@ -85,6 +112,69 @@ export default function GeoAIPanel({
           <span>{t.apiKeyMissingWarning}</span>
         </div>
       )}
+
+      <section className="dataset-card" aria-label={t.datasetAriaLabel}>
+        <div className="dataset-card-header">
+          <span className="dataset-card-icon" aria-hidden="true">
+            <Database size={17} />
+          </span>
+          <div>
+            <h2>{t.datasetTitle}</h2>
+            <p>
+              {activeDataset
+                ? t.datasetActive(activeDatasetLayerCount, activeDatasetPreviewCount)
+                : t.datasetEmpty}
+            </p>
+          </div>
+        </div>
+        <label className="dataset-upload-button">
+          {datasetUploadState?.status === "loading" ? (
+            <Loader2 className="spin" size={17} aria-hidden="true" />
+          ) : (
+            <Upload size={17} aria-hidden="true" />
+          )}
+          <span>{t.datasetUpload}</span>
+          <input
+            accept=".zip"
+            disabled={datasetUploadState?.status === "loading" || isProcessing}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) {
+                onDatasetUpload(file);
+              }
+            }}
+            type="file"
+          />
+        </label>
+        {datasetUploadState?.message && (
+          <p className={`dataset-upload-status is-${datasetUploadState.status}`}>
+            {datasetUploadState.message}
+          </p>
+        )}
+        {activeDataset && (
+          <details className="dataset-layer-details">
+            <summary>
+              <span>{t.datasetLayersLabel}</span>
+              <strong>{activeDatasetLayerCount}</strong>
+              <ChevronDown className="dataset-layer-chevron" size={16} aria-hidden="true" />
+            </summary>
+            <div className="dataset-layer-list" aria-label={t.datasetLayersLabel}>
+              {activeDatasetLayers.map((layer, index) => (
+                <div
+                  className="dataset-layer-item"
+                  key={layer.id}
+                  style={{ "--dataset-layer-color": getDatasetLayerColor(index) }}
+                >
+                  <span className="dataset-layer-swatch" aria-hidden="true" />
+                  <span>{layer.name}</span>
+                  <strong>{t.datasetFeatureCount(layer.featureCount)}</strong>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </section>
 
       <section className="example-section" aria-label={t.examplesLabel}>
         {examples.map((example) => (

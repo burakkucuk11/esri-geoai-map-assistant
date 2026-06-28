@@ -8,7 +8,10 @@ import Map from "@arcgis/core/Map.js";
 import ArcGISMapView from "@arcgis/core/views/MapView.js";
 import Graphic from "@arcgis/core/Graphic.js";
 import GraphicsLayer from "@arcgis/core/layers/GraphicsLayer.js";
+import Extent from "@arcgis/core/geometry/Extent.js";
+import Multipoint from "@arcgis/core/geometry/Multipoint.js";
 import Point from "@arcgis/core/geometry/Point.js";
+import Polygon from "@arcgis/core/geometry/Polygon.js";
 import Polyline from "@arcgis/core/geometry/Polyline.js";
 import { getDictionary } from "../i18n.js";
 import { geocodePlace } from "../utils/geocoder.js";
@@ -39,6 +42,17 @@ const ROUTE_SEGMENT_COLORS = [
   "#db2777",
   "#475569"
 ];
+const DATASET_LAYER_COLORS = [
+  "#0f766e",
+  "#2563eb",
+  "#f97316",
+  "#16a34a",
+  "#7c3aed",
+  "#dc2626",
+  "#0891b2",
+  "#ca8a04",
+  "#db2777"
+];
 
 function escapeHtml(value) {
   return String(value)
@@ -55,6 +69,87 @@ function createPoint({ longitude, latitude }) {
     latitude,
     spatialReference: { wkid: 4326 }
   });
+}
+
+function geoJsonGeometryToEsriGeometry(geometry) {
+  if (!geometry?.type || !Array.isArray(geometry.coordinates)) {
+    return null;
+  }
+
+  const spatialReference = { wkid: 4326 };
+
+  if (geometry.type === "Point") {
+    return new Point({
+      x: geometry.coordinates[0],
+      y: geometry.coordinates[1],
+      spatialReference
+    });
+  }
+
+  if (geometry.type === "MultiPoint") {
+    return new Multipoint({
+      points: geometry.coordinates,
+      spatialReference
+    });
+  }
+
+  if (geometry.type === "LineString") {
+    return new Polyline({
+      paths: [geometry.coordinates],
+      spatialReference
+    });
+  }
+
+  if (geometry.type === "MultiLineString") {
+    return new Polyline({
+      paths: geometry.coordinates,
+      spatialReference
+    });
+  }
+
+  if (geometry.type === "Polygon") {
+    return new Polygon({
+      rings: geometry.coordinates,
+      spatialReference
+    });
+  }
+
+  if (geometry.type === "MultiPolygon") {
+    return new Polygon({
+      rings: geometry.coordinates.flat(),
+      spatialReference
+    });
+  }
+
+  return null;
+}
+
+function normalizeDatasetGeometry(geometry) {
+  if (!geometry) {
+    return null;
+  }
+
+  if (geometry.type && geometry.coordinates) {
+    return geoJsonGeometryToEsriGeometry(geometry);
+  }
+
+  if (Number.isFinite(Number(geometry.x)) && Number.isFinite(Number(geometry.y))) {
+    return new Point(geometry);
+  }
+
+  if (Array.isArray(geometry.points)) {
+    return new Multipoint(geometry);
+  }
+
+  if (Array.isArray(geometry.paths)) {
+    return new Polyline(geometry);
+  }
+
+  if (Array.isArray(geometry.rings)) {
+    return new Polygon(geometry);
+  }
+
+  return geometry;
 }
 
 function haversineDistanceKm(a, b) {
@@ -169,6 +264,186 @@ function buildRouteSegmentPopupContent(segment, labels) {
   return `<div class="geo-popup">${rows.map((row) => `<p>${row}</p>`).join("")}</div>`;
 }
 
+function normalizeGeometryType(value) {
+  return String(value || "").toLowerCase();
+}
+
+function hexToRgb(hexColor) {
+  const normalized = String(hexColor || "").replace("#", "");
+  if (normalized.length !== 6) {
+    return [15, 118, 110];
+  }
+
+  return [
+    Number.parseInt(normalized.slice(0, 2), 16),
+    Number.parseInt(normalized.slice(2, 4), 16),
+    Number.parseInt(normalized.slice(4, 6), 16)
+  ];
+}
+
+function getDatasetLayerColor(layerIndex = 0) {
+  return DATASET_LAYER_COLORS[layerIndex % DATASET_LAYER_COLORS.length];
+}
+
+function datasetSymbol(geometryType, layerIndex = 0) {
+  const normalizedType = normalizeGeometryType(geometryType);
+  const color = getDatasetLayerColor(layerIndex);
+  const [red, green, blue] = hexToRgb(color);
+
+  if (normalizedType.includes("polygon")) {
+    return {
+      type: "simple-fill",
+      color: [red, green, blue, 0.18],
+      outline: {
+        color,
+        width: 1.4
+      }
+    };
+  }
+
+  if (normalizedType.includes("polyline") || normalizedType.includes("line")) {
+    return {
+      type: "simple-line",
+      color,
+      width: 3,
+      cap: "round",
+      join: "round"
+    };
+  }
+
+  return pointSymbol(color, 10);
+}
+
+function highlightSymbol(geometryType) {
+  const normalizedType = normalizeGeometryType(geometryType);
+
+  if (normalizedType.includes("polygon")) {
+    return {
+      type: "simple-fill",
+      color: [250, 204, 21, 0.24],
+      outline: {
+        color: "#dc2626",
+        width: 3
+      }
+    };
+  }
+
+  if (normalizedType.includes("polyline") || normalizedType.includes("line")) {
+    return {
+      type: "simple-line",
+      color: "#dc2626",
+      width: 5,
+      cap: "round",
+      join: "round"
+    };
+  }
+
+  return {
+    type: "simple-marker",
+    color: "#dc2626",
+    size: 16,
+    outline: {
+      color: "#ffffff",
+      width: 2
+    }
+  };
+}
+
+function buildDatasetPopupContent(layer, feature, labels) {
+  const attributes = feature.attributes && typeof feature.attributes === "object"
+    ? feature.attributes
+    : {};
+  const rows = Object.entries(attributes)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .slice(0, 10)
+    .map(
+      ([key, value]) =>
+        `<strong>${escapeHtml(key)}:</strong> ${escapeHtml(value)}`
+    );
+
+  const objectIdLabel = labels.objectIdLabel || "Object ID";
+  rows.unshift(
+    `<strong>${escapeHtml(objectIdLabel)}:</strong> ${escapeHtml(feature.objectId ?? "-")}`
+  );
+
+  return `<div class="geo-popup"><p><strong>${escapeHtml(labels.datasetLayerLabel || "Katman")}:</strong> ${escapeHtml(layer.name)}</p>${rows
+    .map((row) => `<p>${row}</p>`)
+    .join("")}</div>`;
+}
+
+function createDatasetGraphic(layer, feature, symbolFactory, labels, layerIndex = 0) {
+  const geometry = normalizeDatasetGeometry(feature?.geometry);
+
+  if (!geometry) {
+    return null;
+  }
+
+  return new Graphic({
+    geometry,
+    symbol: symbolFactory(layer.geometryType, layerIndex),
+    attributes: {
+      ...(feature.attributes || {}),
+      objectId: feature.objectId,
+      layerId: layer.id,
+      layerName: layer.name
+    },
+    popupTemplate: {
+      title: `${layer.name} #${feature.objectId ?? ""}`.trim(),
+      content: buildDatasetPopupContent(layer, feature, labels)
+    }
+  });
+}
+
+function isValidExtent(extent) {
+  return (
+    Number.isFinite(Number(extent?.xmin)) &&
+    Number.isFinite(Number(extent?.ymin)) &&
+    Number.isFinite(Number(extent?.xmax)) &&
+    Number.isFinite(Number(extent?.ymax))
+  );
+}
+
+function getDatasetExtent(dataset) {
+  const layers = Array.isArray(dataset?.layers) ? dataset.layers : [];
+  const extentValues = layers.map((layer) => layer.extent).filter(isValidExtent);
+
+  if (!extentValues.length) {
+    return null;
+  }
+
+  const merged = extentValues.reduce(
+    (result, extent) => ({
+      xmin: Math.min(result.xmin, Number(extent.xmin)),
+      ymin: Math.min(result.ymin, Number(extent.ymin)),
+      xmax: Math.max(result.xmax, Number(extent.xmax)),
+      ymax: Math.max(result.ymax, Number(extent.ymax))
+    }),
+    {
+      xmin: Number(extentValues[0].xmin),
+      ymin: Number(extentValues[0].ymin),
+      xmax: Number(extentValues[0].xmax),
+      ymax: Number(extentValues[0].ymax)
+    }
+  );
+
+  const minSpan = 0.01;
+  if (merged.xmax - merged.xmin < minSpan) {
+    const center = (merged.xmin + merged.xmax) / 2;
+    merged.xmin = center - minSpan / 2;
+    merged.xmax = center + minSpan / 2;
+  }
+  if (merged.ymax - merged.ymin < minSpan) {
+    const center = (merged.ymin + merged.ymax) / 2;
+    merged.ymin = center - minSpan / 2;
+    merged.ymax = center + minSpan / 2;
+  }
+
+  return new Extent({
+    ...merged,
+    spatialReference: { wkid: 4326 }
+  });
+}
+
 const GeoMapView = forwardRef(function GeoMapView(
   { labels = DEFAULT_LABELS, onReadyChange, onSelectionChange },
   ref
@@ -179,6 +454,8 @@ const GeoMapView = forwardRef(function GeoMapView(
   const markerLayerRef = useRef(null);
   const routeLayerRef = useRef(null);
   const serviceLayerRef = useRef(null);
+  const datasetLayerRef = useRef(null);
+  const datasetHighlightLayerRef = useRef(null);
   const selectedPointRef = useRef(null);
 
   useEffect(() => {
@@ -190,14 +467,20 @@ const GeoMapView = forwardRef(function GeoMapView(
     const markerLayer = new GraphicsLayer({ title: currentLabels.markerLayerTitle });
     const routeLayer = new GraphicsLayer({ title: currentLabels.routeLayerTitle });
     const serviceLayer = new GraphicsLayer({ title: currentLabels.serviceLayerTitle });
+    const datasetLayer = new GraphicsLayer({ title: currentLabels.datasetLayerTitle || "GDB verisi" });
+    const datasetHighlightLayer = new GraphicsLayer({
+      title: currentLabels.datasetHighlightLayerTitle || "GDB vurgusu"
+    });
 
     markerLayerRef.current = markerLayer;
     routeLayerRef.current = routeLayer;
     serviceLayerRef.current = serviceLayer;
+    datasetLayerRef.current = datasetLayer;
+    datasetHighlightLayerRef.current = datasetHighlightLayer;
 
     const map = new Map({
       basemap: DEFAULT_BASEMAP_ID,
-      layers: [serviceLayer, routeLayer, markerLayer]
+      layers: [datasetLayer, serviceLayer, routeLayer, datasetHighlightLayer, markerLayer]
     });
 
     const view = new ArcGISMapView({
@@ -245,18 +528,20 @@ const GeoMapView = forwardRef(function GeoMapView(
   }, [onReadyChange, onSelectionChange]);
 
   function openPopup(view, graphic, point) {
+    const options = {
+      features: [graphic]
+    };
+
+    if (point) {
+      options.location = point;
+    }
+
     if (typeof view.openPopup === "function") {
-      view.openPopup({
-        features: [graphic],
-        location: point
-      });
+      view.openPopup(options);
       return;
     }
 
-    view.popup.open({
-      features: [graphic],
-      location: point
-    });
+    view.popup.open(options);
   }
 
   async function addLocationGraphic(location, options = {}) {
@@ -469,6 +754,139 @@ const GeoMapView = forwardRef(function GeoMapView(
     };
   }
 
+  function getDatasetPreviewGraphics(
+    dataset,
+    symbolFactory,
+    labels,
+    layerId,
+    objectIds,
+    explicitFeatures
+  ) {
+    const objectIdSet = Array.isArray(objectIds) && objectIds.length
+      ? new Set(objectIds.map((id) => String(id)))
+      : null;
+    const layers = Array.isArray(dataset?.layers) ? dataset.layers : [];
+
+    if (Array.isArray(explicitFeatures) && explicitFeatures.length) {
+      const targetLayerIndex = Math.max(0, layers.findIndex((layer) => layer.id === layerId));
+      const targetLayer =
+        layers.find((layer) => layer.id === layerId) ||
+        (layerId ? { id: layerId, name: layerId, geometryType: "Unknown" } : null);
+
+      if (!targetLayer) {
+        return [];
+      }
+
+      return explicitFeatures
+        .filter((feature) => !objectIdSet || objectIdSet.has(String(feature.objectId)))
+        .map((feature) =>
+          createDatasetGraphic(targetLayer, feature, symbolFactory, labels, targetLayerIndex)
+        )
+        .filter(Boolean);
+    }
+
+    return layers.flatMap((layer, layerIndex) => {
+      if (layerId && layer.id !== layerId) {
+        return [];
+      }
+
+      const features = Array.isArray(layer.features) ? layer.features : [];
+      return features
+        .filter((feature) => !objectIdSet || objectIdSet.has(String(feature.objectId)))
+        .map((feature) => createDatasetGraphic(layer, feature, symbolFactory, labels, layerIndex))
+        .filter(Boolean);
+    });
+  }
+
+  async function showDatasetOnMap(dataset) {
+    const view = viewRef.current;
+    const datasetLayer = datasetLayerRef.current;
+    const highlightLayer = datasetHighlightLayerRef.current;
+    const currentLabels = labelsRef.current;
+
+    if (!view || !datasetLayer) {
+      throw new Error(currentLabels.mapNotReady);
+    }
+
+    const graphics = getDatasetPreviewGraphics(dataset, datasetSymbol, currentLabels);
+
+    datasetLayer.removeAll();
+    highlightLayer?.removeAll();
+
+    if (!graphics.length) {
+      throw new Error(currentLabels.datasetNoPreview || "GDB icin harita onizlemesi bulunamadi.");
+    }
+
+    datasetLayer.addMany(graphics);
+
+    const datasetExtent = getDatasetExtent(dataset);
+    await view.goTo(
+      datasetExtent
+        ? {
+            target: datasetExtent.expand(1.12),
+            padding: 80
+          }
+        : {
+            target: graphics,
+            padding: 90
+          },
+      { duration: 750 }
+    );
+
+    return {
+      answer: (currentLabels.datasetShown || ((name, count) => `${name} haritada gosterildi (${count} detay).`))(
+        dataset.name,
+        graphics.length
+      )
+    };
+  }
+
+  async function highlightDatasetOnMap({ dataset, layerId, objectIds, features }) {
+    const view = viewRef.current;
+    const highlightLayer = datasetHighlightLayerRef.current;
+    const currentLabels = labelsRef.current;
+
+    if (!view || !highlightLayer) {
+      throw new Error(currentLabels.mapNotReady);
+    }
+
+    const graphics = getDatasetPreviewGraphics(
+      dataset,
+      highlightSymbol,
+      currentLabels,
+      layerId,
+      objectIds,
+      features
+    );
+
+    highlightLayer.removeAll();
+
+    if (!graphics.length) {
+      throw new Error(
+        currentLabels.datasetNoMatchingFeatures ||
+          "Bu cevapla eslesen harita detayi onizlemede bulunamadi."
+      );
+    }
+
+    highlightLayer.addMany(graphics);
+
+    await view.goTo(
+      {
+        target: graphics,
+        padding: 110
+      },
+      { duration: 750 }
+    );
+
+    openPopup(view, graphics[0]);
+
+    return {
+      answer: (currentLabels.datasetHighlighted || ((count) => `${count} detay vurgulandi.`))(
+        graphics.length
+      )
+    };
+  }
+
   useImperativeHandle(ref, () => ({
     async showPointOnMap(location) {
       await addLocationGraphic(location);
@@ -490,6 +908,14 @@ const GeoMapView = forwardRef(function GeoMapView(
 
     async routeLocationsOnMap(locations) {
       return drawRouteForStops(locations);
+    },
+
+    async showDataset(dataset) {
+      return showDatasetOnMap(dataset);
+    },
+
+    async highlightDatasetFeatures(options) {
+      return highlightDatasetOnMap(options);
     },
 
     changeBasemap(basemapId) {
@@ -517,6 +943,7 @@ const GeoMapView = forwardRef(function GeoMapView(
       markerLayerRef.current?.removeAll();
       routeLayerRef.current?.removeAll();
       serviceLayerRef.current?.removeAll();
+      datasetHighlightLayerRef.current?.removeAll();
 
       const view = viewRef.current;
       if (view) {

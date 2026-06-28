@@ -3,6 +3,7 @@ import { Layers, Loader2, MapPin, Route, X } from "lucide-react";
 import GeoAIPanel from "./components/GeoAIPanel.jsx";
 import GeoMapView from "./components/MapView.jsx";
 import { getDictionary, languageOptions } from "./i18n.js";
+import { hydrateDatasetFeatures, uploadGdbDataset } from "./services/datasetClient.js";
 import { askGeoAI } from "./services/geoAIClient.js";
 
 const DEFAULT_BASEMAP_ID = "topo-vector";
@@ -45,6 +46,45 @@ function formatDurationMinutes(value, fallback) {
 
 function formatTravelMode(value, t) {
   return t.travelModes?.[value] ?? value ?? t.unavailable;
+}
+
+function summarizeDatasetForAI(dataset) {
+  if (!dataset) {
+    return null;
+  }
+
+  const layers = Array.isArray(dataset.layers) ? dataset.layers : [];
+
+  return {
+    id: dataset.id,
+    name: dataset.name,
+    sourceName: dataset.sourceName,
+    postgisReady: Boolean(dataset.postgis?.ready),
+    layerCount: layers.length,
+    layers: layers.map((layer) => ({
+      id: layer.id,
+      name: layer.name,
+      path: layer.path,
+      geometryType: layer.geometryType,
+      featureCount: layer.featureCount,
+      previewFeatureCount: layer.previewFeatureCount,
+      hasMoreFeatures: Boolean(layer.hasMoreFeatures),
+      analysisReady: Boolean(layer.postgis?.ready),
+      fields: Array.isArray(layer.fields)
+        ? layer.fields.slice(0, 20).map((field) => ({
+            name: field.name,
+            alias: field.alias,
+            type: field.type
+          }))
+        : [],
+      sampleFeatures: Array.isArray(layer.features)
+        ? layer.features.slice(0, 6).map((feature) => ({
+            objectId: feature.objectId,
+            attributes: feature.attributes
+          }))
+        : []
+    }))
+  };
 }
 
 function BasemapControl({ basemapId, disabled, options, t, onChange }) {
@@ -183,6 +223,8 @@ export default function App() {
   const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP_ID);
   const [routePanel, setRoutePanel] = useState(null);
   const [selectedPoint, setSelectedPoint] = useState(null);
+  const [activeDataset, setActiveDataset] = useState(null);
+  const [datasetUploadState, setDatasetUploadState] = useState(null);
   const [messages, setMessages] = useState(() => [
     createMessage("assistant", "", { intent: "welcome", i18nKey: "welcome" })
   ]);
@@ -206,10 +248,14 @@ export default function App() {
   }
 
   function buildGeoAIContext() {
+    const activeDatasetSummary = summarizeDatasetForAI(activeDataset);
+
     return {
       selectedPoint,
-      activeLayerId: null,
-      availableLayers: [],
+      activeDatasetId: activeDatasetSummary?.id || null,
+      availableDatasets: activeDatasetSummary ? [activeDatasetSummary] : [],
+      activeLayerId: activeDatasetSummary?.layers?.[0]?.id || null,
+      availableLayers: activeDatasetSummary?.layers || [],
       activeBasemapId: basemapId,
       availableBasemaps: BASEMAP_OPTIONS,
       language
@@ -246,6 +292,73 @@ export default function App() {
     }
   }
 
+  async function handleDatasetUpload(file) {
+    setDatasetUploadState({
+      status: "loading",
+      message: t.dataset.uploading(file.name)
+    });
+
+    try {
+      const uploadedDataset = await uploadGdbDataset(file, language);
+      let dataset = uploadedDataset;
+      setActiveDataset(uploadedDataset);
+      setRoutePanel(null);
+
+      if (mapRef.current) {
+        await mapRef.current.showDataset(uploadedDataset);
+      }
+
+      try {
+        dataset = await hydrateDatasetFeatures(uploadedDataset, language);
+        setActiveDataset(dataset);
+
+        if (mapRef.current) {
+          await mapRef.current.showDataset(dataset);
+        }
+      } catch (hydrateError) {
+        console.warn("PostGIS feature hydration failed:", hydrateError);
+      }
+
+      const layerCount = Array.isArray(dataset.layers) ? dataset.layers.length : 0;
+      const previewCount = Array.isArray(dataset.layers)
+        ? dataset.layers.reduce((total, layer) => total + (layer.previewFeatureCount || 0), 0)
+        : 0;
+
+      setDatasetUploadState({
+        status: "ready",
+        message: t.dataset.loaded(dataset.name, layerCount, previewCount)
+      });
+      setMessages((current) => [
+        ...current,
+        createMessage("assistant", t.dataset.loaded(dataset.name, layerCount, previewCount), {
+          intent: "dataset"
+        })
+      ]);
+    } catch (error) {
+      const message = error.message || t.dataset.uploadError;
+      setDatasetUploadState({
+        status: "error",
+        message
+      });
+      setMessages((current) => [
+        ...current,
+        createMessage("assistant", message, { intent: "error" })
+      ]);
+    }
+  }
+
+  function resolveDatasetForAction(datasetId) {
+    if (!activeDataset) {
+      throw new Error(t.messages.noActiveDataset);
+    }
+
+    if (datasetId && datasetId !== activeDataset.id) {
+      throw new Error(t.messages.datasetNotLoaded);
+    }
+
+    return activeDataset;
+  }
+
   async function executeGeoAIAction(result) {
     const mapAction = result?.mapAction;
     if (!mapAction) {
@@ -253,6 +366,23 @@ export default function App() {
     }
 
     const mapActions = getMapActions();
+
+    if (
+      mapAction.action === "highlight_dataset_layer" ||
+      mapAction.action === "show_dataset_layer" ||
+      mapAction.action === "highlight_dataset_features"
+    ) {
+      setRoutePanel(null);
+      const dataset = resolveDatasetForAction(mapAction.datasetId);
+      await mapActions.highlightDatasetFeatures({
+        dataset,
+        layerId: mapAction.layerId,
+        objectIds: mapAction.objectIds,
+        features: mapAction.features
+      });
+
+      return result.answer;
+    }
 
     if (mapAction.action === "change_basemap") {
       const basemapResult = await changeBasemap(mapAction.basemapId);
@@ -415,9 +545,12 @@ export default function App() {
         languageOptions={languageOptions}
         messages={messages}
         selectedPoint={selectedPoint}
+        activeDataset={activeDataset}
+        datasetUploadState={datasetUploadState}
         apiKeyMissing={apiKeyMissing}
         t={{ ...t.panel, ...t.messages }}
         onExampleClick={submitQuestion}
+        onDatasetUpload={handleDatasetUpload}
         onInputChange={setInputValue}
         onLanguageChange={setLanguage}
         onSubmit={submitQuestion}
