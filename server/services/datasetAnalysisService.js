@@ -1,5 +1,6 @@
 import { getDataset } from "./datasetStore.js";
 import {
+  executeDatasetAISelect,
   queryAttributeDistribution,
   queryLayerCount,
   queryLayerFeatures,
@@ -8,6 +9,10 @@ import {
   queryTopNumericFeature
 } from "./postgisService.js";
 import { planDatasetQueryWithAI } from "./datasetQueryPlannerService.js";
+import {
+  planDatasetSqlWithAI,
+  summarizeSqlResultWithAI
+} from "./datasetSqlPlannerService.js";
 
 const NUMERIC_FIELD_TYPES = new Set([
   "double",
@@ -410,7 +415,7 @@ async function answerObjectIdLookup(dataset, layer, normalizedMessage) {
   };
 }
 
-async function answerTopNumeric(dataset, layer, field, direction, language) {
+async function answerTopNumeric(dataset, layer, field, direction, language, filters = []) {
   if (!field) {
     return {
       type: "geo_answer",
@@ -423,7 +428,7 @@ async function answerTopNumeric(dataset, layer, field, direction, language) {
     return postGISNotReadyAnswer(layer);
   }
 
-  const feature = await queryTopNumericFeature(layer, field.name, direction);
+  const feature = await queryTopNumericFeature(layer, field.name, direction, { filters });
   if (!feature) {
     return {
       type: "geo_answer",
@@ -439,7 +444,7 @@ async function answerTopNumeric(dataset, layer, field, direction, language) {
 
   return {
     type: "geo_answer",
-    answer: `${layer.name} katmaninda ${field.name} alanina gore ${label} kayit ObjectID ${feature.objectId}${nameText}. Deger: ${formatNumber(feature.value, language)}${unit}. Haritada bu detay vurgulandi.`,
+    answer: `${layer.name} katmaninda ${field.name} alanina gore ${label} kayit ObjectID ${feature.objectId}${nameText}. Deger: ${formatNumber(feature.value, language)}${unit}.${formatFilters(filters)} Haritada bu detay vurgulandi.`,
     mapAction: buildFeatureMapAction(dataset, layer, feature)
   };
 }
@@ -613,6 +618,211 @@ function buildFeaturesMapAction(dataset, layer, features) {
   };
 }
 
+function parseJsonMaybe(value) {
+  if (!value || typeof value !== "string") {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function getSqlRowObjectId(row) {
+  return (
+    row?.objectId ??
+    row?.object_id ??
+    row?.objectid ??
+    row?.OBJECTID ??
+    row?.ObjectID ??
+    null
+  );
+}
+
+function getSqlRowGeometry(row) {
+  const geometry = row?.geometry ?? row?.geojson ?? row?.st_asgeojson ?? null;
+  const parsedGeometry = parseJsonMaybe(geometry);
+
+  return parsedGeometry && typeof parsedGeometry === "object" && !Array.isArray(parsedGeometry)
+    ? parsedGeometry
+    : null;
+}
+
+function getSqlRowAttributes(row) {
+  const parsedAttributes = parseJsonMaybe(row?.attributes);
+  const attributes =
+    parsedAttributes && typeof parsedAttributes === "object" && !Array.isArray(parsedAttributes)
+      ? { ...parsedAttributes }
+      : {};
+
+  for (const [key, value] of Object.entries(row || {})) {
+    if (
+      [
+        "geometry",
+        "geojson",
+        "geom",
+        "st_asgeojson",
+        "attributes",
+        "objectId",
+        "object_id",
+        "objectid"
+      ].includes(key)
+    ) {
+      continue;
+    }
+
+    if (value === null || typeof value === "object") {
+      continue;
+    }
+
+    attributes[key] = value;
+  }
+
+  return attributes;
+}
+
+function extractFeaturesFromSqlRows(rows = []) {
+  return rows
+    .map((row) => {
+      const objectId = getSqlRowObjectId(row);
+      const geometry = getSqlRowGeometry(row);
+
+      if (objectId === null || objectId === undefined || !geometry) {
+        return null;
+      }
+
+      return {
+        objectId: String(objectId),
+        attributes: getSqlRowAttributes(row),
+        geometry
+      };
+    })
+    .filter(Boolean);
+}
+
+function formatSqlScalar(value, language) {
+  if (typeof value === "number") {
+    return formatNumber(value, language);
+  }
+
+  if (value === null || value === undefined) {
+    return "-";
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
+
+function buildFallbackSqlAnswer(rows = [], features = [], language = "tr") {
+  if (!rows.length) {
+    return "Sorguya uyan kayit bulunamadi.";
+  }
+
+  const visibleColumns = Object.keys(rows[0] || {}).filter(
+    (key) => !["geometry", "geojson", "geom", "st_asgeojson", "attributes"].includes(key)
+  );
+
+  if (rows.length === 1) {
+    const row = rows[0];
+    const objectId = getSqlRowObjectId(row);
+    const attributes = getSqlRowAttributes(row);
+    const name = attributes.Name || attributes.name || attributes.NAME || row.name || row.Name;
+    const valueParts = visibleColumns
+      .filter((key) => !["objectId", "object_id", "objectid"].includes(key))
+      .slice(0, 4)
+      .map((key) => `${key}: ${formatSqlScalar(row[key], language)}`);
+
+    return [
+      objectId !== null && objectId !== undefined ? `ObjectID ${objectId}` : "1 kayit bulundu",
+      name ? `(${name})` : "",
+      valueParts.length ? valueParts.join(", ") : "",
+      features.length ? "Haritada vurgulandi." : ""
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  const names = rows
+    .slice(0, 8)
+    .map((row) => {
+      const objectId = getSqlRowObjectId(row);
+      const attributes = getSqlRowAttributes(row);
+      return attributes.Name || attributes.name || row.name || (objectId ? `ObjectID ${objectId}` : null);
+    })
+    .filter(Boolean)
+    .join(", ");
+
+  return `${formatNumber(rows.length, language)} kayit bulundu${names ? `: ${names}` : ""}.${
+    features.length ? " Haritada vurgulandi." : ""
+  }`;
+}
+
+async function answerDatasetSqlQuestion(message, context, dataset, language) {
+  let plan;
+
+  try {
+    plan = await planDatasetSqlWithAI(message, dataset, context);
+  } catch (error) {
+    console.warn("Dataset SQL planner failed:", error.message);
+    return null;
+  }
+
+  if (!plan || plan.intent === "not_dataset") {
+    return null;
+  }
+
+  if (plan.intent !== "dataset_sql") {
+    return {
+      type: "unsupported",
+      answer: "AI provider bu veri sorusunu guvenli bir SELECT sorgusuna donusturemedi.",
+      mapAction: null
+    };
+  }
+
+  let execution;
+  try {
+    execution = await executeDatasetAISelect(dataset, plan);
+  } catch (error) {
+    console.warn("Dataset SQL execution failed:", error.message);
+    return {
+      type: "unsupported",
+      answer: `AI provider SQL uretti ancak sorgu guvenli dogrulamadan gecemedi veya PostGIS'te calistirilamadi: ${error.message}`,
+      mapAction: null
+    };
+  }
+
+  const rows = execution.rows || [];
+  const features = extractFeaturesFromSqlRows(rows);
+  const targetLayer = execution.targetLayer;
+  let answer = null;
+
+  try {
+    answer = await summarizeSqlResultWithAI({
+      message,
+      plan,
+      rows,
+      language,
+      highlightedFeatureCount: features.length
+    });
+  } catch (error) {
+    console.warn("Dataset SQL answer summarizer failed:", error.message);
+  }
+
+  return {
+    type: "geo_answer",
+    answer: answer || buildFallbackSqlAnswer(rows, features, language),
+    mapAction:
+      targetLayer && features.length
+        ? buildFeaturesMapAction(dataset, targetLayer, features)
+        : null
+  };
+}
+
 async function answerPlannedDatasetQuery(message, context, dataset, language) {
   let plan;
 
@@ -670,7 +880,7 @@ async function answerPlannedDatasetQuery(message, context, dataset, language) {
 
   if (plan.operation === "top_numeric") {
     const field = findFieldByName(layer, plan.field);
-    return answerTopNumeric(dataset, layer, field, plan.direction, language);
+    return answerTopNumeric(dataset, layer, field, plan.direction, language, plan.filters);
   }
 
   if (plan.operation === "numeric_summary") {
@@ -730,7 +940,16 @@ export async function tryAnswerDatasetQuestion(message, context = {}) {
   const normalizedMessage = normalizeForSearch(message);
   const language = context.language === "en" ? "en" : "tr";
 
-  if (!dataset || !isDatasetQuestion(dataset, normalizedMessage)) {
+  if (!dataset) {
+    return null;
+  }
+
+  const sqlAnswer = await answerDatasetSqlQuestion(message, context, dataset, language);
+  if (sqlAnswer) {
+    return sqlAnswer;
+  }
+
+  if (!isDatasetQuestion(dataset, normalizedMessage)) {
     return null;
   }
 

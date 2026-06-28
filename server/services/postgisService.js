@@ -5,8 +5,12 @@ import { Pool } from "pg";
 
 const DEFAULT_SCHEMA = "gdb_imports";
 const DEFAULT_FEATURE_LIMIT = 10000;
+const DEFAULT_AI_SQL_LIMIT = 50;
 const INSERT_BATCH_SIZE = 250;
 const NUMERIC_TEXT_PATTERN = "^\\s*-?\\d+(\\.\\d+)?\\s*$";
+const FORBIDDEN_AI_SQL_PATTERN =
+  /\b(insert|update|delete|drop|alter|create|truncate|copy|grant|revoke|vacuum|analyze|call|do|execute|merge|replace|set|reset|listen|notify|security|attach|detach)\b|--|\/\*|\*\/|\b(pg_sleep|dblink|lo_import|lo_export|pg_read|pg_ls|pg_stat_file|pg_file|current_setting)\b/i;
+const FORBIDDEN_AI_SQL_SCHEMAS = /\b(information_schema|pg_catalog)\b/i;
 
 let pool = null;
 let poolKey = "";
@@ -80,6 +84,10 @@ function getSchemaName() {
 
 function getDisplayFeatureLimit() {
   return getNumberEnv("POSTGIS_DISPLAY_FEATURE_LIMIT", DEFAULT_FEATURE_LIMIT);
+}
+
+function getAISqlLimit() {
+  return getNumberEnv("POSTGIS_AI_SQL_LIMIT", DEFAULT_AI_SQL_LIMIT);
 }
 
 async function* readNdjson(filePath) {
@@ -475,9 +483,18 @@ export async function queryNumericAggregate(layer, fieldName, aggregate = "avg",
   };
 }
 
-export async function queryTopNumericFeature(layer, fieldName, direction = "desc") {
+export async function queryTopNumericFeature(layer, fieldName, direction = "desc", options = {}) {
   const qualifiedName = qualifiedTableName(layer.postgis);
   const normalizedDirection = String(direction).toLowerCase() === "asc" ? "ASC" : "DESC";
+  const values = [fieldName, NUMERIC_TEXT_PATTERN];
+  const { clauses } = buildPlannedFilters(options.filters, values);
+  const whereClauses = [
+    "geom IS NOT NULL",
+    "attributes ? $1",
+    "(attributes ->> $1) ~ $2",
+    ...clauses
+  ];
+
   const result = await getPool().query(
     `
       SELECT
@@ -486,14 +503,11 @@ export async function queryTopNumericFeature(layer, fieldName, direction = "desc
         ST_AsGeoJSON(geom)::json AS geometry,
         (attributes ->> $1)::double precision AS value
       FROM ${qualifiedName}
-      WHERE
-        geom IS NOT NULL
-        AND attributes ? $1
-        AND (attributes ->> $1) ~ $2
+      WHERE ${whereClauses.join(" AND ")}
       ORDER BY value ${normalizedDirection} NULLS LAST
       LIMIT 1
     `,
-    [fieldName, NUMERIC_TEXT_PATTERN]
+    values
   );
 
   return result.rows[0] || null;
@@ -517,6 +531,132 @@ export async function queryAttributeDistribution(layer, fieldName, limit = 10) {
   );
 
   return result.rows;
+}
+
+function normalizeTableReference(value) {
+  return String(value || "")
+    .trim()
+    .replaceAll('"', "")
+    .replace(/\s*\.\s*/g, ".")
+    .toLowerCase();
+}
+
+function getAllowedDatasetTableRefs(dataset) {
+  const refs = new Map();
+
+  for (const layer of dataset?.layers || []) {
+    if (!layer?.postgis?.schema || !layer?.postgis?.table) {
+      continue;
+    }
+
+    const qualified = `${layer.postgis.schema}.${layer.postgis.table}`;
+    refs.set(normalizeTableReference(qualified), layer);
+    refs.set(normalizeTableReference(layer.postgis.table), layer);
+  }
+
+  return refs;
+}
+
+function extractSqlTableReferences(sql) {
+  const refs = [];
+  const tableRegex =
+    /\b(?:from|join)\s+((?:"[^"]+"\s*\.\s*"[^"]+")|(?:[a-z_][a-z0-9_]*\s*\.\s*[a-z_][a-z0-9_]*)|(?:"[^"]+")|(?:[a-z_][a-z0-9_]*))/gi;
+  let match;
+
+  while ((match = tableRegex.exec(sql))) {
+    refs.push(normalizeTableReference(match[1]));
+  }
+
+  return refs;
+}
+
+function normalizeAISelectSql(sql, dataset) {
+  const trimmed = String(sql || "").trim();
+
+  if (!trimmed) {
+    throw new Error("AI provider bos SQL dondurdu.");
+  }
+
+  const withoutTrailingSemicolon = trimmed.replace(/;\s*$/, "").trim();
+
+  if (withoutTrailingSemicolon.includes(";")) {
+    throw new Error("AI SQL'i tek sorgu olmali.");
+  }
+
+  if (!/^select\b/i.test(withoutTrailingSemicolon)) {
+    throw new Error("AI SQL'i sadece SELECT olabilir.");
+  }
+
+  if (/\b(?:from|join)\s*\(/i.test(withoutTrailingSemicolon)) {
+    throw new Error("Alt sorgulu FROM/JOIN yapisi desteklenmiyor.");
+  }
+
+  if (
+    FORBIDDEN_AI_SQL_PATTERN.test(withoutTrailingSemicolon) ||
+    FORBIDDEN_AI_SQL_SCHEMAS.test(withoutTrailingSemicolon)
+  ) {
+    throw new Error("AI SQL'i guvenli dogrulamadan gecemedi.");
+  }
+
+  const allowedRefs = getAllowedDatasetTableRefs(dataset);
+  const referencedTables = extractSqlTableReferences(withoutTrailingSemicolon);
+
+  if (!referencedTables.length) {
+    throw new Error("AI SQL'i izinli GDB tablosu icermiyor.");
+  }
+
+  const referencedLayers = [];
+  for (const tableRef of referencedTables) {
+    const layer = allowedRefs.get(tableRef);
+    if (!layer) {
+      throw new Error(`AI SQL'i izinli olmayan tablo kullandi: ${tableRef}`);
+    }
+
+    if (!referencedLayers.some((candidate) => candidate.id === layer.id)) {
+      referencedLayers.push(layer);
+    }
+  }
+
+  return {
+    sql: withoutTrailingSemicolon,
+    referencedLayers
+  };
+}
+
+export async function executeDatasetAISelect(dataset, plan, options = {}) {
+  const { sql, referencedLayers } = normalizeAISelectSql(plan?.sql, dataset);
+  const maxLimit = Math.max(1, Math.min(getAISqlLimit(), Number(options.limit) || getAISqlLimit()));
+  const targetLayer =
+    (dataset?.layers || []).find((layer) => layer.id === plan?.targetLayerId) ||
+    referencedLayers[0] ||
+    null;
+  const client = await getPool().connect();
+
+  try {
+    await client.query("BEGIN TRANSACTION READ ONLY");
+    await client.query("SET LOCAL statement_timeout = '8000ms'");
+
+    const result = await client.query(`
+      SELECT *
+      FROM (${sql}) AS ai_sql_result
+      LIMIT ${maxLimit}
+    `);
+
+    await client.query("COMMIT");
+
+    return {
+      rows: result.rows,
+      rowCount: result.rowCount,
+      targetLayer,
+      referencedLayers,
+      sql
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function closePostGISPool() {
