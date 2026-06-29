@@ -8,6 +8,9 @@ const DEFAULT_FEATURE_LIMIT = 10000;
 const DEFAULT_AI_SQL_LIMIT = 50;
 const INSERT_BATCH_SIZE = 250;
 const NUMERIC_TEXT_PATTERN = "^\\s*-?\\d+(\\.\\d+)?\\s*$";
+const NON_ATTRIBUTE_FIELD_TYPES = new Set(["geometry", "blob", "raster"]);
+const OID_FIELD_TYPES = new Set(["oid"]);
+const RESERVED_SYSTEM_COLUMNS = new Set(["object_id", "geom"]);
 const FORBIDDEN_AI_SQL_PATTERN =
   /\b(insert|update|delete|drop|alter|create|truncate|copy|grant|revoke|vacuum|analyze|call|do|execute|merge|replace|set|reset|listen|notify|security|attach|detach)\b|--|\/\*|\*\/|\b(pg_sleep|dblink|lo_import|lo_export|pg_read|pg_ls|pg_stat_file|pg_file|current_setting)\b/i;
 const FORBIDDEN_AI_SQL_SCHEMAS = /\b(information_schema|pg_catalog)\b/i;
@@ -70,6 +73,10 @@ function quoteIdentifier(identifier) {
   return `"${String(identifier).replaceAll('"', '""')}"`;
 }
 
+function quoteLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
 function qualifiedTableName(layerPostGIS) {
   if (!layerPostGIS?.schema || !layerPostGIS?.table) {
     throw new Error("Katman icin PostGIS tablo bilgisi bulunamadi.");
@@ -106,30 +113,213 @@ async function* readNdjson(filePath) {
   }
 }
 
-async function insertRows(client, qualifiedName, rows) {
+function getFieldSqlType(field) {
+  const type = String(field?.type || "").toLowerCase();
+
+  if (OID_FIELD_TYPES.has(type) || type === "biginteger") {
+    return "bigint";
+  }
+
+  if (type === "integer" || type === "smallinteger") {
+    return "integer";
+  }
+
+  if (type === "double" || type === "single") {
+    return "double precision";
+  }
+
+  if (type === "date") {
+    return "timestamp";
+  }
+
+  return "text";
+}
+
+function coerceColumnValue(value, field) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const type = String(field?.type || "").toLowerCase();
+
+  if (OID_FIELD_TYPES.has(type) || type === "biginteger") {
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? Math.trunc(numericValue) : null;
+  }
+
+  if (type === "integer" || type === "smallinteger") {
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? Math.trunc(numericValue) : null;
+  }
+
+  if (type === "double" || type === "single") {
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? numericValue : null;
+  }
+
+  return String(value);
+}
+
+function buildColumnMappings(fields = []) {
+  const usedNames = new Set(RESERVED_SYSTEM_COLUMNS);
+  const mappings = [];
+
+  for (const field of fields || []) {
+    const type = String(field?.type || "").toLowerCase();
+    if (NON_ATTRIBUTE_FIELD_TYPES.has(type)) {
+      continue;
+    }
+
+    const baseName = sanitizeIdentifier(field?.name, "field");
+    let columnName = baseName;
+    let suffix = 2;
+
+    while (usedNames.has(columnName)) {
+      columnName = `${baseName}_${suffix}`;
+      suffix += 1;
+    }
+
+    usedNames.add(columnName);
+    mappings.push({
+      fieldName: field.name,
+      alias: field.alias,
+      fieldType: field.type,
+      columnName,
+      sqlType: getFieldSqlType(field),
+      source: OID_FIELD_TYPES.has(type) ? "objectId" : "attribute"
+    });
+  }
+
+  return mappings;
+}
+
+function getPhysicalColumns(layer) {
+  return Array.isArray(layer?.postgis?.columns) ? layer.postgis.columns : [];
+}
+
+function getColumnForField(layer, fieldName) {
+  const normalizedFieldName = String(fieldName || "").toLowerCase();
+  return (
+    getPhysicalColumns(layer).find(
+      (column) =>
+        String(column.fieldName || "").toLowerCase() === normalizedFieldName ||
+        String(column.columnName || "").toLowerCase() === normalizedFieldName
+    ) || null
+  );
+}
+
+function isColumnNumeric(column) {
+  return ["bigint", "integer", "double precision"].includes(String(column?.sqlType || "").toLowerCase());
+}
+
+function buildAttributesExpression(layer) {
+  const columns = getPhysicalColumns(layer);
+
+  if (!columns.length) {
+    return "attributes";
+  }
+
+  const pairs = columns.flatMap((column) => [
+    quoteLiteral(column.fieldName || column.columnName),
+    quoteIdentifier(column.columnName)
+  ]);
+
+  return pairs.length ? `jsonb_build_object(${pairs.join(", ")})` : "'{}'::jsonb";
+}
+
+function buildFieldTextExpression(layer, fieldName, values) {
+  const column = getColumnForField(layer, fieldName);
+
+  if (column) {
+    return `${quoteIdentifier(column.columnName)}::text`;
+  }
+
+  values.push(String(fieldName));
+  return `attributes ->> $${values.length}`;
+}
+
+function buildFieldValueExpression(layer, fieldName, values, numeric = false) {
+  const column = getColumnForField(layer, fieldName);
+
+  if (column) {
+    return numeric ? `${quoteIdentifier(column.columnName)}::double precision` : quoteIdentifier(column.columnName);
+  }
+
+  values.push(String(fieldName));
+  const fieldParam = `$${values.length}`;
+
+  if (numeric) {
+    return `(attributes ->> ${fieldParam})::double precision`;
+  }
+
+  return `attributes ->> ${fieldParam}`;
+}
+
+function buildFieldExistsClause(layer, fieldName, values, numeric = false) {
+  const column = getColumnForField(layer, fieldName);
+
+  if (column) {
+    return `${quoteIdentifier(column.columnName)} IS NOT NULL`;
+  }
+
+  values.push(String(fieldName));
+  const fieldParam = `$${values.length}`;
+
+  if (!numeric) {
+    return `attributes ? ${fieldParam}`;
+  }
+
+  values.push(NUMERIC_TEXT_PATTERN);
+  return `attributes ? ${fieldParam} AND (attributes ->> ${fieldParam}) ~ $${values.length}`;
+}
+
+async function insertRows(client, qualifiedName, columns, rows) {
   if (!rows.length) {
     return;
   }
 
+  const insertColumns = ["object_id", ...columns.map((column) => column.columnName), "geom"];
+  const valueCountPerRow = insertColumns.length;
   const values = [];
   const placeholders = rows.map((row, index) => {
-    const offset = index * 3;
-    values.push(
+    const offset = index * valueCountPerRow;
+    const rowValues = [
       String(row.objectId),
-      JSON.stringify(row.attributes || {}),
+      ...columns.map((column) =>
+        coerceColumnValue(
+          column.source === "objectId" ? row.objectId : row.attributes?.[column.fieldName],
+          { type: column.fieldType }
+        )
+      ),
       String(row.wkt)
-    );
+    ];
 
-    return `($${offset + 1}, $${offset + 2}::jsonb, ST_Force2D(ST_SetSRID(ST_GeomFromText($${offset + 3}), 4326)))`;
+    values.push(...rowValues);
+
+    const placeholdersForRow = insertColumns.map((columnName, columnIndex) => {
+      const parameter = `$${offset + columnIndex + 1}`;
+      return columnName === "geom"
+        ? `ST_Force2D(ST_SetSRID(ST_GeomFromText(${parameter}), 4326))`
+        : parameter;
+    });
+
+    return `(${placeholdersForRow.join(", ")})`;
   });
+
+  const updateAssignments = [
+    ...columns.map(
+      (column) =>
+        `${quoteIdentifier(column.columnName)} = EXCLUDED.${quoteIdentifier(column.columnName)}`
+    ),
+    "geom = EXCLUDED.geom"
+  ];
 
   await client.query(
     `
-      INSERT INTO ${qualifiedName} (object_id, attributes, geom)
+      INSERT INTO ${qualifiedName} (${insertColumns.map(quoteIdentifier).join(", ")})
       VALUES ${placeholders.join(", ")}
       ON CONFLICT (object_id) DO UPDATE
-      SET attributes = EXCLUDED.attributes,
-          geom = EXCLUDED.geom
+      SET ${updateAssignments.join(", ")}
     `,
     values
   );
@@ -201,15 +391,23 @@ export async function importDatasetToPostGIS(dataset, exportManifest) {
       const table = `${datasetPrefix}_${tableBaseName}`.slice(0, 63);
       const qualifiedName = `${quoteIdentifier(schema)}.${quoteIdentifier(table)}`;
       const sourceFile = path.join(exportDir, manifestLayer.file);
+      const columns = buildColumnMappings(manifestLayer.fields);
+      const maxBatchSize = Math.max(
+        1,
+        Math.min(INSERT_BATCH_SIZE, Math.floor(60000 / Math.max(1, columns.length + 2)))
+      );
       let importedFeatureCount = 0;
       let batch = [];
 
       await client.query("BEGIN");
       await client.query(`DROP TABLE IF EXISTS ${qualifiedName}`);
+      const columnDefinitions = columns.map(
+        (column) => `${quoteIdentifier(column.columnName)} ${column.sqlType}`
+      );
       await client.query(`
         CREATE TABLE ${qualifiedName} (
           object_id text PRIMARY KEY,
-          attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
+          ${columnDefinitions.length ? `${columnDefinitions.join(",\n          ")},` : ""}
           geom geometry(Geometry, 4326)
         )
       `);
@@ -221,20 +419,19 @@ export async function importDatasetToPostGIS(dataset, exportManifest) {
 
         batch.push(row);
 
-        if (batch.length >= INSERT_BATCH_SIZE) {
-          await insertRows(client, qualifiedName, batch);
+        if (batch.length >= maxBatchSize) {
+          await insertRows(client, qualifiedName, columns, batch);
           importedFeatureCount += batch.length;
           batch = [];
         }
       }
 
       if (batch.length) {
-        await insertRows(client, qualifiedName, batch);
+        await insertRows(client, qualifiedName, columns, batch);
         importedFeatureCount += batch.length;
       }
 
       await client.query(`CREATE INDEX ${quoteIdentifier(`${table}_geom_idx`)} ON ${qualifiedName} USING GIST (geom)`);
-      await client.query(`CREATE INDEX ${quoteIdentifier(`${table}_attrs_idx`)} ON ${qualifiedName} USING GIN (attributes)`);
       const extent = await getTableExtent(client, qualifiedName);
       await client.query("COMMIT");
 
@@ -246,6 +443,7 @@ export async function importDatasetToPostGIS(dataset, exportManifest) {
         importedAt,
         featureCount: manifestLayer.featureCount,
         importedFeatureCount,
+        columns,
         extent
       });
     }
@@ -266,6 +464,7 @@ export async function importDatasetToPostGIS(dataset, exportManifest) {
 
 export async function queryLayerFeatures(layer, options = {}) {
   const qualifiedName = qualifiedTableName(layer.postgis);
+  const attributesExpression = buildAttributesExpression(layer);
   const limit = Math.min(
     getDisplayFeatureLimit(),
     Math.max(1, Number(options.limit) || getDisplayFeatureLimit())
@@ -287,7 +486,7 @@ export async function queryLayerFeatures(layer, options = {}) {
     `
       SELECT
         object_id AS "objectId",
-        attributes,
+        ${attributesExpression} AS attributes,
         ST_AsGeoJSON(geom)::json AS geometry
       FROM ${qualifiedName}
       WHERE ${filters.join(" AND ")}
@@ -306,7 +505,7 @@ export async function queryLayerFeatures(layer, options = {}) {
   }));
 }
 
-function buildPlannedFilters(filters = [], values = []) {
+function buildPlannedFilters(layer, filters = [], values = []) {
   const clauses = [];
 
   for (const filter of filters) {
@@ -315,12 +514,11 @@ function buildPlannedFilters(filters = [], values = []) {
     }
 
     const operator = String(filter.operator || "eq").toLowerCase();
-    values.push(String(filter.field));
-    const fieldParam = `$${values.length}`;
 
     if (operator === "contains") {
+      const fieldExpression = buildFieldTextExpression(layer, filter.field, values);
       values.push(`%${String(filter.value)}%`);
-      clauses.push(`attributes ->> ${fieldParam} ILIKE $${values.length}`);
+      clauses.push(`${fieldExpression} ILIKE $${values.length}`);
       continue;
     }
 
@@ -337,18 +535,22 @@ function buildPlannedFilters(filters = [], values = []) {
         lte: "<="
       }[operator];
 
-      values.push(NUMERIC_TEXT_PATTERN);
-      const patternParam = `$${values.length}`;
       values.push(numericValue);
       const valueParam = `$${values.length}`;
-      clauses.push(
-        `(attributes ->> ${fieldParam}) ~ ${patternParam} AND (attributes ->> ${fieldParam})::double precision ${sqlOperator} ${valueParam}`
-      );
+      const fieldExpression = buildFieldValueExpression(layer, filter.field, values, true);
+      const existsClause = buildFieldExistsClause(layer, filter.field, values, true);
+      clauses.push(`${existsClause} AND ${fieldExpression} ${sqlOperator} ${valueParam}`);
       continue;
     }
 
     values.push(String(filter.value));
-    clauses.push(`attributes ->> ${fieldParam} = $${values.length}`);
+    const valueParam = `$${values.length}`;
+    const column = getColumnForField(layer, filter.field);
+    if (column && isColumnNumeric(column)) {
+      clauses.push(`${quoteIdentifier(column.columnName)} = ${valueParam}::double precision`);
+    } else {
+      clauses.push(`${buildFieldTextExpression(layer, filter.field, values)} = ${valueParam}`);
+    }
   }
 
   return {
@@ -361,7 +563,7 @@ function normalizeSortDirection(direction) {
   return String(direction).toLowerCase() === "asc" ? "ASC" : "DESC";
 }
 
-function buildOrderClause(orderBy, direction, values, numeric = false) {
+function buildOrderClause(layer, orderBy, direction, values, numeric = false) {
   if (!orderBy) {
     return `
       CASE WHEN object_id ~ '^\\d+$' THEN object_id::bigint END NULLS LAST,
@@ -370,6 +572,14 @@ function buildOrderClause(orderBy, direction, values, numeric = false) {
   }
 
   const normalizedDirection = normalizeSortDirection(direction);
+  const column = getColumnForField(layer, orderBy);
+
+  if (column) {
+    return numeric || isColumnNumeric(column)
+      ? `${quoteIdentifier(column.columnName)}::double precision ${normalizedDirection} NULLS LAST`
+      : `${quoteIdentifier(column.columnName)} ${normalizedDirection} NULLS LAST`;
+  }
+
   values.push(String(orderBy));
   const fieldParam = `$${values.length}`;
 
@@ -390,7 +600,7 @@ function buildOrderClause(orderBy, direction, values, numeric = false) {
 export async function queryLayerCount(layer, options = {}) {
   const qualifiedName = qualifiedTableName(layer.postgis);
   const values = [];
-  const { clauses } = buildPlannedFilters(options.filters, values);
+  const { clauses } = buildPlannedFilters(layer, options.filters, values);
   const whereClauses = ["geom IS NOT NULL", ...clauses];
 
   const result = await getPool().query(
@@ -407,14 +617,16 @@ export async function queryLayerCount(layer, options = {}) {
 
 export async function queryPlannedFeatures(layer, options = {}) {
   const qualifiedName = qualifiedTableName(layer.postgis);
+  const attributesExpression = buildAttributesExpression(layer);
   const limit = Math.min(
     getDisplayFeatureLimit(),
     Math.max(1, Number(options.limit) || 20)
   );
   const values = [];
-  const { clauses } = buildPlannedFilters(options.filters, values);
+  const { clauses } = buildPlannedFilters(layer, options.filters, values);
   const whereClauses = ["geom IS NOT NULL", ...clauses];
   const orderClause = buildOrderClause(
+    layer,
     options.orderBy,
     options.direction,
     values,
@@ -427,7 +639,7 @@ export async function queryPlannedFeatures(layer, options = {}) {
     `
       SELECT
         object_id AS "objectId",
-        attributes,
+        ${attributesExpression} AS attributes,
         ST_AsGeoJSON(geom)::json AS geometry
       FROM ${qualifiedName}
       WHERE ${whereClauses.join(" AND ")}
@@ -457,19 +669,16 @@ export async function queryNumericAggregate(layer, fieldName, aggregate = "avg",
     throw new Error("Desteklenmeyen sayisal ozet islemi.");
   }
 
-  const values = [String(fieldName), NUMERIC_TEXT_PATTERN];
-  const { clauses } = buildPlannedFilters(options.filters, values);
-  const whereClauses = [
-    "geom IS NOT NULL",
-    "attributes ? $1",
-    "(attributes ->> $1) ~ $2",
-    ...clauses
-  ];
+  const values = [];
+  const fieldExpression = buildFieldValueExpression(layer, fieldName, values, true);
+  const fieldExistsClause = buildFieldExistsClause(layer, fieldName, values, true);
+  const { clauses } = buildPlannedFilters(layer, options.filters, values);
+  const whereClauses = ["geom IS NOT NULL", fieldExistsClause, ...clauses];
 
   const result = await getPool().query(
     `
       SELECT
-        ${aggregateFunction}((attributes ->> $1)::double precision)::double precision AS value,
+        ${aggregateFunction}(${fieldExpression})::double precision AS value,
         COUNT(*)::integer AS count
       FROM ${qualifiedName}
       WHERE ${whereClauses.join(" AND ")}
@@ -485,23 +694,21 @@ export async function queryNumericAggregate(layer, fieldName, aggregate = "avg",
 
 export async function queryTopNumericFeature(layer, fieldName, direction = "desc", options = {}) {
   const qualifiedName = qualifiedTableName(layer.postgis);
+  const attributesExpression = buildAttributesExpression(layer);
   const normalizedDirection = String(direction).toLowerCase() === "asc" ? "ASC" : "DESC";
-  const values = [fieldName, NUMERIC_TEXT_PATTERN];
-  const { clauses } = buildPlannedFilters(options.filters, values);
-  const whereClauses = [
-    "geom IS NOT NULL",
-    "attributes ? $1",
-    "(attributes ->> $1) ~ $2",
-    ...clauses
-  ];
+  const values = [];
+  const fieldExpression = buildFieldValueExpression(layer, fieldName, values, true);
+  const fieldExistsClause = buildFieldExistsClause(layer, fieldName, values, true);
+  const { clauses } = buildPlannedFilters(layer, options.filters, values);
+  const whereClauses = ["geom IS NOT NULL", fieldExistsClause, ...clauses];
 
   const result = await getPool().query(
     `
       SELECT
         object_id AS "objectId",
-        attributes,
+        ${attributesExpression} AS attributes,
         ST_AsGeoJSON(geom)::json AS geometry,
-        (attributes ->> $1)::double precision AS value
+        ${fieldExpression} AS value
       FROM ${qualifiedName}
       WHERE ${whereClauses.join(" AND ")}
       ORDER BY value ${normalizedDirection} NULLS LAST
@@ -516,18 +723,23 @@ export async function queryTopNumericFeature(layer, fieldName, direction = "desc
 export async function queryAttributeDistribution(layer, fieldName, limit = 10) {
   const qualifiedName = qualifiedTableName(layer.postgis);
   const safeLimit = Math.max(1, Math.min(50, Number(limit) || 10));
+  const values = [];
+  const fieldExpression = buildFieldTextExpression(layer, fieldName, values);
+  const fieldExistsClause = buildFieldExistsClause(layer, fieldName, values);
+  values.push(safeLimit);
+
   const result = await getPool().query(
     `
       SELECT
-        COALESCE(NULLIF(attributes ->> $1, ''), '(bos)') AS value,
+        COALESCE(NULLIF(${fieldExpression}, ''), '(bos)') AS value,
         COUNT(*)::integer AS count
       FROM ${qualifiedName}
-      WHERE attributes ? $1
+      WHERE ${fieldExistsClause}
       GROUP BY 1
       ORDER BY count DESC, value
-      LIMIT $2
+      LIMIT $${values.length}
     `,
-    [fieldName, safeLimit]
+    values
   );
 
   return result.rows;

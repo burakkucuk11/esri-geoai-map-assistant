@@ -194,9 +194,11 @@ If the user asks for multiple places, routes, stops, attractions, recommended pl
 - every location must include name, latitude, longitude, and optionally description.
 - keep locations in the same order as the answer list.
 - do not use show_locations if you are not confident about the coordinates.
+- For itinerary or travel route requests, use show_locations in visit order. The application will draw the route between the returned stops.
 
 If Application context contains availableDatasets or availableLayers:
 - Treat them as uploaded local GIS data metadata.
+- Ignore uploaded dataset context for public geography, tourism, city itinerary, attraction recommendation, or route requests unless the user explicitly mentions the uploaded dataset, GDB, layer, field, feature, object id, or local data.
 - You may answer questions about layer names, field names, feature counts, geometry types, and sample attributes using only that context.
 - If the answer is about a whole uploaded layer and it should be shown on the map, use action: "show_dataset_layer".
 - If the answer identifies a relevant uploaded layer, use action: "highlight_dataset_layer" with datasetId and layerId.

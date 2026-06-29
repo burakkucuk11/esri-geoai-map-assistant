@@ -1,9 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
-  ChevronDown,
   Database,
   Languages,
+  Layers,
   Loader2,
   MapPin,
   MessageSquareText,
@@ -48,11 +48,14 @@ export default function GeoAIPanel({
   onSubmit
 }) {
   const messageListRef = useRef(null);
+  const layerPopoverRef = useRef(null);
+  const [isLayerPopoverOpen, setIsLayerPopoverOpen] = useState(false);
   const activeDatasetLayers = Array.isArray(activeDataset?.layers) ? activeDataset.layers : [];
   const activeDatasetLayerCount = activeDataset?.layerCount ?? activeDatasetLayers.length;
   const activeDatasetPreviewCount =
     activeDataset?.previewFeatureCount ??
     activeDatasetLayers.reduce((total, layer) => total + (layer.previewFeatureCount || 0), 0);
+  const layerPopoverId = activeDataset ? `dataset-layer-popover-${activeDataset.id}` : undefined;
 
   useEffect(() => {
     messageListRef.current?.scrollTo({
@@ -61,9 +64,44 @@ export default function GeoAIPanel({
     });
   }, [messages]);
 
+  useEffect(() => {
+    if (!isLayerPopoverOpen) {
+      return undefined;
+    }
+
+    function handlePointerDown(event) {
+      if (!layerPopoverRef.current?.contains(event.target)) {
+        setIsLayerPopoverOpen(false);
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setIsLayerPopoverOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isLayerPopoverOpen]);
+
+  useEffect(() => {
+    setIsLayerPopoverOpen(false);
+  }, [activeDataset?.id]);
+
   return (
     <aside className="assistant-panel" aria-label={t.ariaLabel}>
       <header className="panel-header">
+        <div className="brand-strip" aria-label="IDVLabs">
+          <img src="/brand/idvlabs-logo.png" alt="IDVLabs" />
+          <span>GeoAI Studio</span>
+        </div>
+
         <div className="panel-title-row">
           <span className="panel-icon" aria-hidden="true">
             <Sparkles size={20} />
@@ -118,7 +156,7 @@ export default function GeoAIPanel({
           <span className="dataset-card-icon" aria-hidden="true">
             <Database size={17} />
           </span>
-          <div>
+          <div className="dataset-card-copy">
             <h2>{t.datasetTitle}</h2>
             <p>
               {activeDataset
@@ -126,6 +164,44 @@ export default function GeoAIPanel({
                 : t.datasetEmpty}
             </p>
           </div>
+          {activeDataset && activeDatasetLayers.length > 0 && (
+            <div className="dataset-layer-popover-wrap" ref={layerPopoverRef}>
+              <button
+                aria-controls={layerPopoverId}
+                aria-expanded={isLayerPopoverOpen}
+                aria-label={`${t.datasetLayersLabel}: ${activeDatasetLayerCount}`}
+                className="dataset-layer-trigger"
+                onClick={() => setIsLayerPopoverOpen((current) => !current)}
+                title={`${t.datasetLayersLabel}: ${activeDatasetLayerCount}`}
+                type="button"
+              >
+                <Layers size={15} aria-hidden="true" />
+                <strong>{activeDatasetLayerCount}</strong>
+              </button>
+              {isLayerPopoverOpen && (
+                <div
+                  className="dataset-layer-popover"
+                  id={layerPopoverId}
+                  role="tooltip"
+                >
+                  <div className="dataset-layer-popover-title">{t.datasetLayersLabel}</div>
+                  <div className="dataset-layer-list" aria-label={t.datasetLayersLabel}>
+                    {activeDatasetLayers.map((layer, index) => (
+                      <div
+                        className="dataset-layer-item"
+                        key={layer.id}
+                        style={{ "--dataset-layer-color": getDatasetLayerColor(index) }}
+                      >
+                        <span className="dataset-layer-swatch" aria-hidden="true" />
+                        <span>{layer.name}</span>
+                        <strong>{t.datasetFeatureCount(layer.featureCount)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <label className="dataset-upload-button">
           {datasetUploadState?.status === "loading" ? (
@@ -151,28 +227,6 @@ export default function GeoAIPanel({
           <p className={`dataset-upload-status is-${datasetUploadState.status}`}>
             {datasetUploadState.message}
           </p>
-        )}
-        {activeDataset && (
-          <details className="dataset-layer-details">
-            <summary>
-              <span>{t.datasetLayersLabel}</span>
-              <strong>{activeDatasetLayerCount}</strong>
-              <ChevronDown className="dataset-layer-chevron" size={16} aria-hidden="true" />
-            </summary>
-            <div className="dataset-layer-list" aria-label={t.datasetLayersLabel}>
-              {activeDatasetLayers.map((layer, index) => (
-                <div
-                  className="dataset-layer-item"
-                  key={layer.id}
-                  style={{ "--dataset-layer-color": getDatasetLayerColor(index) }}
-                >
-                  <span className="dataset-layer-swatch" aria-hidden="true" />
-                  <span>{layer.name}</span>
-                  <strong>{t.datasetFeatureCount(layer.featureCount)}</strong>
-                </div>
-              ))}
-            </div>
-          </details>
         )}
       </section>
 
@@ -232,11 +286,11 @@ export default function GeoAIPanel({
         />
         <button className="send-button" disabled={isProcessing || !inputValue.trim()} type="submit">
           {isProcessing ? (
-            <Loader2 className="spin" size={18} aria-hidden="true" />
+            <MessageSquareText size={18} aria-hidden="true" />
           ) : (
             <Send size={18} aria-hidden="true" />
           )}
-          <span>{t.send}</span>
+          <span>{isProcessing ? t.sendWaiting : t.send}</span>
         </button>
       </form>
     </aside>

@@ -153,7 +153,8 @@ export async function attachPostGISImport(datasetId, postgisImport) {
           ready: Boolean(layerImport.ready),
           featureCount: layerImport.featureCount,
           importedFeatureCount: layerImport.importedFeatureCount,
-          importedAt: layerImport.importedAt
+          importedAt: layerImport.importedAt,
+          columns: layerImport.columns
         }
       };
     });

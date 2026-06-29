@@ -50,7 +50,7 @@ const DATASET_KEYWORDS = [
   "structure"
 ];
 
-const SHORT_EXACT_KEYWORDS = new Set(["su", "hat"]);
+const SHORT_EXACT_KEYWORDS = new Set(["su", "hat", "detay"]);
 
 function normalizeText(value) {
   const text = String(value || "");
@@ -280,8 +280,11 @@ function isDatasetQuestion(dataset, normalizedMessage) {
   const layerMentioned = (dataset.layers || []).some((layer) =>
     getLayerAliases(layer).some((alias) => includesKeyword(normalizedMessage, alias))
   );
+  const fieldMentioned = (dataset.layers || []).some((layer) =>
+    (layer.fields || []).some((field) => fieldMatches(field, normalizedMessage))
+  );
 
-  return layerMentioned || includesAny(normalizedMessage, DATASET_KEYWORDS);
+  return layerMentioned || fieldMentioned || includesAny(normalizedMessage, DATASET_KEYWORDS);
 }
 
 function getFeatureName(feature) {
@@ -295,6 +298,29 @@ function getFeatureName(feature) {
     attributes.Title ||
     attributes.title ||
     null
+  );
+}
+
+function hasSpecificFilterIntent(dataset, normalizedMessage) {
+  const mentionsField = (dataset.layers || []).some((layer) =>
+    (layer.fields || []).some((field) => fieldMatches(field, normalizedMessage))
+  );
+
+  return (
+    mentionsField &&
+    includesAny(normalizedMessage, [
+      "alaninda",
+      "alanındaki",
+      "yazan",
+      "iceren",
+      "icerisinde",
+      "olan",
+      "degeri",
+      "esit",
+      "filtre",
+      "filter",
+      "where"
+    ])
   );
 }
 
@@ -944,13 +970,22 @@ export async function tryAnswerDatasetQuestion(message, context = {}) {
     return null;
   }
 
+  if (!isDatasetQuestion(dataset, normalizedMessage)) {
+    return null;
+  }
+
   const sqlAnswer = await answerDatasetSqlQuestion(message, context, dataset, language);
   if (sqlAnswer) {
     return sqlAnswer;
   }
 
-  if (!isDatasetQuestion(dataset, normalizedMessage)) {
-    return null;
+  if (hasSpecificFilterIntent(dataset, normalizedMessage)) {
+    return {
+      type: "unsupported",
+      answer:
+        "Bu soru alan filtresi iceriyor. AI SQL planlayici guvenli bir sorgu uretemedigi icin genel katman sonucuyla cevap vermiyorum.",
+      mapAction: null
+    };
   }
 
   if (

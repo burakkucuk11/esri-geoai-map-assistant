@@ -19,6 +19,15 @@ function getLayerSqlName(layer) {
   return `${quoteIdentifier(layer.postgis.schema)}.${quoteIdentifier(layer.postgis.table)}`;
 }
 
+function getFieldSqlColumn(layer, fieldName) {
+  return (
+    (layer?.postgis?.columns || []).find(
+      (column) =>
+        String(column.fieldName || "").toLowerCase() === String(fieldName || "").toLowerCase()
+    ) || null
+  );
+}
+
 function summarizeDatasetForSql(dataset) {
   return {
     id: dataset.id,
@@ -37,11 +46,6 @@ function summarizeDatasetForSql(dataset) {
             usage: "Feature id. Select it as object_id or \"objectId\" when returning features."
           },
           {
-            name: "attributes",
-            usage:
-              "JSONB attributes. Real GDB fields are inside this JSONB column; use attributes ->> 'FieldName'."
-          },
-          {
             name: "geom",
             usage:
               "PostGIS geometry in EPSG:4326. Select ST_AsGeoJSON(geom)::json AS geometry for map highlight."
@@ -51,14 +55,16 @@ function summarizeDatasetForSql(dataset) {
           name: field.name,
           alias: field.alias,
           type: field.type,
+          sqlColumn: getFieldSqlColumn(layer, field.name)?.columnName || null,
+          sqlType: getFieldSqlColumn(layer, field.name)?.sqlType || null,
           preferredUsage:
             field.name === "Shape_Area"
               ? "Prefer this field for polygon/building area or size questions."
               : field.name === "Shape_Length"
                 ? "Prefer this field for length/perimeter questions."
                 : undefined,
-          sqlTextExpression: `attributes ->> '${String(field.name).replaceAll("'", "''")}'`,
-          sqlNumericExpression: `(attributes ->> '${String(field.name).replaceAll("'", "''")}')::double precision`
+          legacySqlTextExpression: `attributes ->> '${String(field.name).replaceAll("'", "''")}'`,
+          legacySqlNumericExpression: `(attributes ->> '${String(field.name).replaceAll("'", "''")}')::double precision`
         }))
       }))
   };
@@ -79,12 +85,14 @@ Critical rules:
 - Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, COPY, GRANT, REVOKE, DO, CALL, EXECUTE, SET, RESET, VACUUM, ANALYZE, or any destructive operation.
 - Use only the exact sqlTable values provided in the dataset schema.
 - Do not query public tables, information_schema, pg_catalog, or any table not listed.
-- GDB fields are not physical table columns. They live inside the JSONB column named attributes.
-- To read a GDB field, use attributes ->> 'FieldName'.
-- For numeric comparisons/order/aggregates, cast the JSON text value to double precision.
+- GDB fields are physical PostgreSQL columns when the field has a sqlColumn value.
+- Prefer physical sqlColumn values. For example if field Name has sqlColumn "name", use "name"; if Shape_Area has sqlColumn "shape_area", use "shape_area".
+- Quote physical field columns with double quotes.
+- Only use legacySqlTextExpression/legacySqlNumericExpression when sqlColumn is null.
+- For physical numeric columns such as "shape_area", compare/order/aggregate the column directly. For legacy JSON expressions only, cast the JSON text value to double precision.
 - When the user asks for polygon/building area, size, "alan", "en buyuk alan", or "largest area", prefer the field named Shape_Area if it exists. Use a custom field named area only if Shape_Area is not available or the user explicitly says the field is named area.
 - When the user asks for length, distance, perimeter, or "uzunluk", prefer the field named Shape_Length if it exists.
-- For feature results that should be highlighted on the map, SELECT object_id AS "objectId", attributes, ST_AsGeoJSON(geom)::json AS geometry.
+- For feature results that should be highlighted on the map, SELECT object_id AS "objectId", ST_AsGeoJSON(geom)::json AS geometry, plus the useful physical columns such as "objectid", "name", "shape_area".
 - Always include WHERE geom IS NOT NULL when returning mappable features.
 - Use ILIKE for user text filters unless the user explicitly asks for exact equality.
 - Add LIMIT. For feature/list/top queries use LIMIT 1 to 20 unless the user asks for a different small number. Never use LIMIT above 50.
@@ -110,7 +118,7 @@ Return a query like:
   "intent": "dataset_sql",
   "targetLayerId": "building layer id from schema",
   "resultMode": "features",
-  "sql": "SELECT object_id AS \\"objectId\\", attributes, ST_AsGeoJSON(geom)::json AS geometry, attributes ->> 'Name' AS name, (attributes ->> 'Shape_Area')::double precision AS shape_area FROM \\"schema\\".\\"building_table\\" WHERE geom IS NOT NULL AND attributes ->> 'Name' ILIKE '%Malambwe%' AND attributes ? 'Shape_Area' ORDER BY shape_area DESC NULLS LAST LIMIT 1",
+  "sql": "SELECT object_id AS \\"objectId\\", ST_AsGeoJSON(geom)::json AS geometry, \\"objectid\\", \\"name\\", \\"shape_area\\" FROM \\"schema\\".\\"building_table\\" WHERE geom IS NOT NULL AND \\"name\\" ILIKE '%Malambwe%' AND \\"shape_area\\" IS NOT NULL ORDER BY \\"shape_area\\" DESC NULLS LAST LIMIT 1",
   "answerHint": "Say which matching building has the largest Shape_Area and mention ObjectID, Name, and Shape_Area."
 }
 `;

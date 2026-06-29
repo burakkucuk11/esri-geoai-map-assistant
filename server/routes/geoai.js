@@ -39,6 +39,8 @@ function shouldUseLocalAnswer(localAnswer, provider) {
 
   return (
     localAnswer.response?.type === "map_action" ||
+    action === "show_location" ||
+    action === "show_locations" ||
     action === "change_basemap" ||
     action === "clear_graphics" ||
     action === "geocode" ||

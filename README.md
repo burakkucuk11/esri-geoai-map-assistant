@@ -208,7 +208,9 @@ ARCPY_PYTHON_PATH=C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\pyth
 
 Map display can request PostGIS-backed features up to `POSTGIS_DISPLAY_FEATURE_LIMIT`.
 
-Dataset-focused questions use the configured AI provider as the first decision maker. The AI receives the uploaded dataset schema and returns a PostgreSQL/PostGIS `SELECT` statement. The backend then validates that SQL, allows only listed GDB import tables, runs it inside a read-only transaction, caps the returned row count with `POSTGIS_AI_SQL_LIMIT`, and highlights returned feature geometries when the SQL selects `object_id`, `attributes`, and `ST_AsGeoJSON(geom)::json AS geometry`.
+Dataset-focused questions use the configured AI provider as the first decision maker. The AI receives the uploaded dataset schema and returns a PostgreSQL/PostGIS `SELECT` statement. The backend then validates that SQL, allows only listed GDB import tables, runs it inside a read-only transaction, caps the returned row count with `POSTGIS_AI_SQL_LIMIT`, and highlights returned feature geometries when the SQL selects `object_id AS "objectId"` and `ST_AsGeoJSON(geom)::json AS geometry`.
+
+New GDB uploads are imported as normal PostgreSQL columns. For example, GDB fields such as `ObjectID`, `Name`, and `Shape_Area` become table columns such as `objectid`, `name`, and `shape_area`, plus the PostGIS `geom` column. Older local imports that still contain an `attributes` JSONB column remain readable for compatibility.
 
 The older rule-based dataset handlers remain as fallback for simple metadata questions or when the AI says the message is not a dataset SQL question.
 
