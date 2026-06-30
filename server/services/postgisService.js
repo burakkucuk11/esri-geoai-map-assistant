@@ -871,6 +871,88 @@ export async function executeDatasetAISelect(dataset, plan, options = {}) {
   }
 }
 
+function extractCompanionFeatureQueryParts(sql) {
+  const normalizedSql = String(sql || "").replace(/\s+/g, " ").trim();
+  const fromMatch = normalizedSql.match(
+    /\bfrom\s+(.+?)(?:\s+\bwhere\b\s+(.+?))?(?:\s+\bgroup\s+by\b|\s+\border\s+by\b|\s+\blimit\b|$)/i
+  );
+
+  if (!fromMatch) {
+    return null;
+  }
+
+  const fromClause = String(fromMatch[1] || "").trim();
+  const whereClause = String(fromMatch[2] || "").trim();
+
+  if (!fromClause || /\bjoin\b|,/i.test(fromClause)) {
+    return null;
+  }
+
+  return {
+    fromClause,
+    whereClause
+  };
+}
+
+export async function queryAIFeaturesForAggregateResult(dataset, plan, options = {}) {
+  const { sql, referencedLayers } = normalizeAISelectSql(plan?.sql, dataset);
+  const targetLayer =
+    (dataset?.layers || []).find((layer) => layer.id === plan?.targetLayerId) ||
+    referencedLayers[0] ||
+    null;
+
+  if (!targetLayer || referencedLayers.length !== 1) {
+    return [];
+  }
+
+  const parts = extractCompanionFeatureQueryParts(sql);
+  if (!parts) {
+    return [];
+  }
+
+  const attributesExpression = buildAttributesExpression(targetLayer);
+  const maxLimit = Math.max(
+    1,
+    Math.min(getAISqlLimit(), Number(options.limit) || getAISqlLimit())
+  );
+  const whereClause = parts.whereClause
+    ? `geom IS NOT NULL AND (${parts.whereClause})`
+    : "geom IS NOT NULL";
+  const client = await getPool().connect();
+
+  try {
+    await client.query("BEGIN TRANSACTION READ ONLY");
+    await client.query("SET LOCAL statement_timeout = '8000ms'");
+
+    const result = await client.query(`
+      SELECT
+        object_id AS "objectId",
+        ${attributesExpression} AS attributes,
+        ST_AsGeoJSON(geom)::json AS geometry
+      FROM ${parts.fromClause}
+      WHERE ${whereClause}
+      ORDER BY
+        CASE WHEN object_id ~ '^\\d+$' THEN object_id::bigint END NULLS LAST,
+        object_id
+      LIMIT ${maxLimit}
+    `);
+
+    await client.query("COMMIT");
+
+    return result.rows.map((row) => ({
+      objectId: row.objectId,
+      attributes: row.attributes || {},
+      geometry: row.geometry
+    }));
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.warn("AI aggregate companion feature query failed:", error.message);
+    return [];
+  } finally {
+    client.release();
+  }
+}
+
 export async function closePostGISPool() {
   if (pool) {
     await pool.end();

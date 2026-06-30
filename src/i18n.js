@@ -35,6 +35,14 @@ export const dictionaries = {
         walking: "Yürüyüş"
       }
     },
+    resultPanel: {
+      title: "Sorgu Sonuçları",
+      close: "Sonuç panelini kapat",
+      highlightAll: "Tümünü vurgula",
+      zoomToFeature: "Detaya zoom yap",
+      summary: ({ layerName, totalCount, shownCount }) =>
+        `${layerName || "Katman"} - ${Number(totalCount ?? shownCount ?? 0).toLocaleString("tr-TR")} sonuç, ${Number(shownCount ?? 0).toLocaleString("tr-TR")} kayıt listeleniyor`
+    },
     basemapControl: {
       label: "Altlık harita",
       selectLabel: "Altlık harita seç",
@@ -205,6 +213,14 @@ export const dictionaries = {
         driving: "Car",
         walking: "Walking"
       }
+    },
+    resultPanel: {
+      title: "Query Results",
+      close: "Close result panel",
+      highlightAll: "Highlight all",
+      zoomToFeature: "Zoom to feature",
+      summary: ({ layerName, totalCount, shownCount }) =>
+        `${layerName || "Layer"} - ${Number(totalCount ?? shownCount ?? 0).toLocaleString("en-US")} results, ${Number(shownCount ?? 0).toLocaleString("en-US")} listed`
     },
     basemapControl: {
       label: "Basemap",

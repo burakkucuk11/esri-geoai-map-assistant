@@ -2,6 +2,7 @@ import { getDataset } from "./datasetStore.js";
 import {
   executeDatasetAISelect,
   queryAttributeDistribution,
+  queryAIFeaturesForAggregateResult,
   queryLayerCount,
   queryLayerFeatures,
   queryNumericAggregate,
@@ -51,6 +52,19 @@ const DATASET_KEYWORDS = [
 ];
 
 const SHORT_EXACT_KEYWORDS = new Set(["su", "hat", "detay"]);
+const RESULT_PANEL_FEATURE_LIMIT = 50;
+const RESULT_PANEL_META_FIELDS = new Set([
+  "geometry",
+  "geojson",
+  "geom",
+  "st_asgeojson",
+  "attributes",
+  "objectId",
+  "object_id",
+  "objectid",
+  "total_count",
+  "row_count"
+]);
 
 function normalizeText(value) {
   const text = String(value || "");
@@ -301,6 +315,114 @@ function getFeatureName(feature) {
   );
 }
 
+function getFeatureAttributes(feature) {
+  return feature?.attributes && typeof feature.attributes === "object" ? feature.attributes : {};
+}
+
+function buildResultColumns(layer, features = []) {
+  const physicalColumns = Array.isArray(layer?.postgis?.columns) ? layer.postgis.columns : [];
+  const sourceColumns = physicalColumns.length
+    ? physicalColumns.map((column) => ({
+        key: column.fieldName || column.columnName,
+        label: column.fieldName || column.columnName,
+        accessorKeys: [column.fieldName, column.columnName, column.alias].filter(Boolean)
+      }))
+    : (layer?.fields || [])
+        .filter((field) => !RESULT_PANEL_META_FIELDS.has(String(field?.name || "")))
+        .filter((field) => !["geometry", "blob", "raster"].includes(String(field?.type || "").toLowerCase()))
+        .map((field) => ({
+          key: field.name,
+          label: field.name,
+          accessorKeys: [field.name, field.alias].filter(Boolean)
+        }));
+
+  const attributeColumns = [];
+  for (const feature of features) {
+    for (const key of Object.keys(getFeatureAttributes(feature))) {
+      if (!RESULT_PANEL_META_FIELDS.has(key) && !attributeColumns.some((column) => column.key === key)) {
+        attributeColumns.push({
+          key,
+          label: key,
+          accessorKeys: [key]
+        });
+      }
+    }
+  }
+
+  const columns = [
+    {
+      key: "objectId",
+      label: "ObjectID",
+      accessorKeys: ["objectId", "object_id"]
+    },
+    ...sourceColumns,
+    ...attributeColumns
+  ];
+  const uniqueColumns = [];
+  const seen = new Set();
+
+  for (const column of columns) {
+    const normalizedKey = String(column.key).toLowerCase();
+    if (seen.has(normalizedKey)) {
+      continue;
+    }
+
+    seen.add(normalizedKey);
+    uniqueColumns.push(column);
+  }
+
+  return uniqueColumns;
+}
+
+function toResultPanelFeature(feature) {
+  return {
+    objectId: String(feature.objectId),
+    attributes: getFeatureAttributes(feature),
+    geometry: feature.geometry
+  };
+}
+
+function buildDatasetResultPanel(dataset, layer, features = [], options = {}) {
+  if (!dataset || !layer || !features.length) {
+    return null;
+  }
+
+  const panelFeatures = features.slice(0, RESULT_PANEL_FEATURE_LIMIT).map(toResultPanelFeature);
+  const totalCount = Number.isFinite(Number(options.totalCount))
+    ? Number(options.totalCount)
+    : panelFeatures.length;
+
+  return {
+    type: "dataset_features",
+    datasetId: dataset.id,
+    datasetName: dataset.name,
+    layerId: layer.id,
+    layerName: layer.name,
+    title: options.title || `${layer.name} sonuçları`,
+    summary:
+      options.summary ||
+      `${formatNumber(totalCount, options.language || "tr")} detay bulundu. İlk ${formatNumber(
+        panelFeatures.length,
+        options.language || "tr"
+      )} detay tabloda gösteriliyor.`,
+    totalCount,
+    shownCount: panelFeatures.length,
+    columns: buildResultColumns(layer, panelFeatures),
+    features: panelFeatures
+  };
+}
+
+function withResultPanel(answer, dataset, layer, features = [], options = {}) {
+  const resultPanel = buildDatasetResultPanel(dataset, layer, features, options);
+
+  return resultPanel
+    ? {
+        ...answer,
+        resultPanel
+      }
+    : answer;
+}
+
 function hasSpecificFilterIntent(dataset, normalizedMessage) {
   const mentionsField = (dataset.layers || []).some((layer) =>
     (layer.fields || []).some((field) => fieldMatches(field, normalizedMessage))
@@ -366,17 +488,30 @@ function answerLayerFields(layer) {
   };
 }
 
-function answerLayerCount(dataset, layer, language) {
-  return {
+async function answerLayerCount(dataset, layer, language) {
+  if (needsPostGIS(layer)) {
+    return {
+      type: "geo_answer",
+      answer: `${layer.name} katmaninda ${formatNumber(layer.featureCount, language)} detay var.`,
+      mapAction: buildLayerMapAction(dataset, layer)
+    };
+  }
+
+  const features = await queryPlannedFeatures(layer, {
+    limit: RESULT_PANEL_FEATURE_LIMIT
+  });
+  const answer = {
     type: "geo_answer",
     answer: `${layer.name} katmaninda ${formatNumber(layer.featureCount, language)} detay var.`,
-    mapAction: {
-      action: "highlight_dataset_layer",
-      datasetId: dataset.id,
-      layerId: layer.id,
-      objectIds: []
-    }
+    mapAction: features.length
+      ? buildFeaturesMapAction(dataset, layer, features)
+      : buildLayerMapAction(dataset, layer)
   };
+
+  return withResultPanel(answer, dataset, layer, features, {
+    totalCount: layer.featureCount,
+    language
+  });
 }
 
 function answerLargestLayer(dataset, language) {
@@ -529,12 +664,26 @@ async function answerNumericSummary(dataset, layer, field, aggregate, language, 
     min: "minimum",
     max: "maksimum"
   }[aggregate];
+  const features = await queryPlannedFeatures(layer, {
+    filters,
+    orderBy: field.name,
+    direction: "desc",
+    numericOrder: true,
+    limit: RESULT_PANEL_FEATURE_LIMIT
+  });
 
-  return {
+  const answer = {
     type: "geo_answer",
     answer: `${layer.name} katmaninda ${field.name} alaninin ${aggregateLabel} degeri ${formatNumber(summary.value, language)}. Hesaplanan kayit sayisi: ${formatNumber(summary.count, language)}.${formatFilters(filters)}`,
-    mapAction: buildLayerMapAction(dataset, layer)
+    mapAction: features.length
+      ? buildFeaturesMapAction(dataset, layer, features)
+      : buildLayerMapAction(dataset, layer)
   };
+
+  return withResultPanel(answer, dataset, layer, features, {
+    totalCount: summary.count,
+    language
+  });
 }
 
 function parseFirstNumber(value) {
@@ -566,11 +715,25 @@ async function answerNumericFilterQuery(dataset, layer, field, operator, value, 
 
   if (options.countOnly) {
     const count = await queryLayerCount(layer, { filters });
-    return {
+    const features = await queryPlannedFeatures(layer, {
+      filters,
+      orderBy: field.name,
+      direction: operator === "gt" ? "desc" : "asc",
+      numericOrder: true,
+      limit: RESULT_PANEL_FEATURE_LIMIT
+    });
+    const answer = {
       type: "geo_answer",
       answer: `${layer.name} katmaninda ${field.name} ${operator === "gt" ? ">" : "<"} ${formatNumber(value, language)} kosuluna uyan ${formatNumber(count, language)} detay var.`,
-      mapAction: buildLayerMapAction(dataset, layer)
+      mapAction: features.length
+        ? buildFeaturesMapAction(dataset, layer, features)
+        : buildLayerMapAction(dataset, layer)
     };
+
+    return withResultPanel(answer, dataset, layer, features, {
+      totalCount: count,
+      language
+    });
   }
 
   const features = await queryPlannedFeatures(layer, {
@@ -585,13 +748,18 @@ async function answerNumericFilterQuery(dataset, layer, field, operator, value, 
     .slice(0, 8)
     .join(", ");
 
-  return {
+  const answer = {
     type: "geo_answer",
     answer: features.length
       ? `${layer.name} katmaninda ${field.name} ${operator === "gt" ? ">" : "<"} ${formatNumber(value, language)} kosuluna uyan ilk ${formatNumber(features.length, language)} detay: ${names}. Haritada vurgulandi.`
       : `${layer.name} katmaninda ${field.name} ${operator === "gt" ? ">" : "<"} ${formatNumber(value, language)} kosuluna uyan detay bulunamadi.`,
     mapAction: features.length ? buildFeaturesMapAction(dataset, layer, features) : null
   };
+
+  return withResultPanel(answer, dataset, layer, features, {
+    totalCount: features.length,
+    language
+  });
 }
 
 function findLayerById(dataset, layerId) {
@@ -693,7 +861,9 @@ function getSqlRowAttributes(row) {
         "attributes",
         "objectId",
         "object_id",
-        "objectid"
+        "objectid",
+        "total_count",
+        "row_count"
       ].includes(key)
     ) {
       continue;
@@ -726,6 +896,60 @@ function extractFeaturesFromSqlRows(rows = []) {
       };
     })
     .filter(Boolean);
+}
+
+async function hydrateResultFeatures(layer, features = []) {
+  if (!layer || !features.length) {
+    return features;
+  }
+
+  try {
+    const fullFeatures = await queryLayerFeatures(layer, {
+      objectIds: features.map((feature) => feature.objectId),
+      limit: features.length
+    });
+    const fullFeatureMap = new Map(
+      fullFeatures.map((feature) => [String(feature.objectId), feature])
+    );
+
+    return features.map((feature) => {
+      const fullFeature = fullFeatureMap.get(String(feature.objectId));
+      if (!fullFeature) {
+        return feature;
+      }
+
+      return {
+        ...feature,
+        attributes: {
+          ...(fullFeature.attributes || {}),
+          ...(feature.attributes || {})
+        },
+        geometry: feature.geometry || fullFeature.geometry
+      };
+    });
+  } catch (error) {
+    console.warn("Result panel feature hydration failed:", error.message);
+    return features;
+  }
+}
+
+function getSqlResultTotalCount(rows = [], fallbackCount = 0) {
+  for (const row of rows) {
+    const value =
+      row?.total_count ??
+      row?.row_count ??
+      row?.count ??
+      row?.COUNT ??
+      row?.adet ??
+      null;
+    const numericValue = Number(value);
+
+    if (Number.isFinite(numericValue)) {
+      return numericValue;
+    }
+  }
+
+  return fallbackCount;
 }
 
 function formatSqlScalar(value, language) {
@@ -823,8 +1047,20 @@ async function answerDatasetSqlQuestion(message, context, dataset, language) {
   }
 
   const rows = execution.rows || [];
-  const features = extractFeaturesFromSqlRows(rows);
   const targetLayer = execution.targetLayer;
+  let features = extractFeaturesFromSqlRows(rows);
+  const totalCount = getSqlResultTotalCount(rows, features.length);
+
+  if (!features.length && targetLayer && totalCount > 0) {
+    features = await queryAIFeaturesForAggregateResult(dataset, plan, {
+      limit: RESULT_PANEL_FEATURE_LIMIT
+    });
+  }
+
+  if (features.length && targetLayer) {
+    features = await hydrateResultFeatures(targetLayer, features);
+  }
+
   let answer = null;
 
   try {
@@ -839,7 +1075,7 @@ async function answerDatasetSqlQuestion(message, context, dataset, language) {
     console.warn("Dataset SQL answer summarizer failed:", error.message);
   }
 
-  return {
+  const response = {
     type: "geo_answer",
     answer: answer || buildFallbackSqlAnswer(rows, features, language),
     mapAction:
@@ -847,6 +1083,13 @@ async function answerDatasetSqlQuestion(message, context, dataset, language) {
         ? buildFeaturesMapAction(dataset, targetLayer, features)
         : null
   };
+
+  return targetLayer && features.length
+    ? withResultPanel(response, dataset, targetLayer, features, {
+        totalCount,
+        language
+      })
+    : response;
 }
 
 async function answerPlannedDatasetQuery(message, context, dataset, language) {
@@ -892,11 +1135,25 @@ async function answerPlannedDatasetQuery(message, context, dataset, language) {
 
   if (plan.operation === "count") {
     const count = await queryLayerCount(layer, { filters: plan.filters });
-    return {
+    const features = await queryPlannedFeatures(layer, {
+      filters: plan.filters,
+      orderBy: plan.field,
+      direction: plan.direction,
+      numericOrder: Boolean(plan.field && isNumericField(findFieldByName(layer, plan.field))),
+      limit: RESULT_PANEL_FEATURE_LIMIT
+    });
+    const answer = {
       type: "geo_answer",
       answer: `${layer.name} katmaninda sorguya uyan ${formatNumber(count, language)} detay var.${formatFilters(plan.filters)}`,
-      mapAction: buildLayerMapAction(dataset, layer)
+      mapAction: features.length
+        ? buildFeaturesMapAction(dataset, layer, features)
+        : buildLayerMapAction(dataset, layer)
     };
+
+    return withResultPanel(answer, dataset, layer, features, {
+      totalCount: count,
+      language
+    });
   }
 
   if (plan.operation === "distribution") {
@@ -929,11 +1186,25 @@ async function answerPlannedDatasetQuery(message, context, dataset, language) {
       max: "maksimum"
     }[plan.aggregate];
 
-    return {
+    const features = await queryPlannedFeatures(layer, {
+      filters: plan.filters,
+      orderBy: field.name,
+      direction: "desc",
+      numericOrder: true,
+      limit: RESULT_PANEL_FEATURE_LIMIT
+    });
+    const answer = {
       type: "geo_answer",
       answer: `${layer.name} katmaninda ${field.name} alaninin ${aggregateLabel} degeri ${formatNumber(summary.value, language)}. Hesaplanan kayit sayisi: ${formatNumber(summary.count, language)}.${formatFilters(plan.filters)}`,
-      mapAction: buildLayerMapAction(dataset, layer)
+      mapAction: features.length
+        ? buildFeaturesMapAction(dataset, layer, features)
+        : buildLayerMapAction(dataset, layer)
     };
+
+    return withResultPanel(answer, dataset, layer, features, {
+      totalCount: summary.count,
+      language
+    });
   }
 
   if (plan.operation === "list_features") {
@@ -949,13 +1220,18 @@ async function answerPlannedDatasetQuery(message, context, dataset, language) {
       .slice(0, 8)
       .join(", ");
 
-    return {
+    const answer = {
       type: "geo_answer",
       answer: features.length
         ? `${layer.name} katmaninda sorguya uyan ${formatNumber(features.length, language)} detay bulundu: ${names}.${formatFilters(plan.filters)} Haritada vurgulandi.`
         : `${layer.name} katmaninda sorguya uyan detay bulunamadi.${formatFilters(plan.filters)}`,
       mapAction: features.length ? buildFeaturesMapAction(dataset, layer, features) : null
     };
+
+    return withResultPanel(answer, dataset, layer, features, {
+      totalCount: features.length,
+      language
+    });
   }
 
   return null;

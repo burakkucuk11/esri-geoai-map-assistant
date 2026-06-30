@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, Loader2, MapPin, Route, X } from "lucide-react";
+import { Database, Layers, Loader2, MapPin, Route, X } from "lucide-react";
 import GeoAIPanel from "./components/GeoAIPanel.jsx";
 import GeoMapView from "./components/MapView.jsx";
 import { getDictionary, languageOptions } from "./i18n.js";
@@ -46,6 +46,95 @@ function formatDurationMinutes(value, fallback) {
 
 function formatTravelMode(value, t) {
   return t.travelModes?.[value] ?? value ?? t.unavailable;
+}
+
+function formatResultCellValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+
+  if (typeof value === "number") {
+    return new Intl.NumberFormat("tr-TR", {
+      maximumFractionDigits: 2
+    }).format(value);
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
+
+function findValueByKey(source, key) {
+  if (!source || typeof source !== "object" || key === undefined || key === null) {
+    return undefined;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(source, key)) {
+    return source[key];
+  }
+
+  const normalizedKey = String(key).toLowerCase();
+  const matchingKey = Object.keys(source).find(
+    (candidate) => candidate.toLowerCase() === normalizedKey
+  );
+
+  return matchingKey ? source[matchingKey] : undefined;
+}
+
+function getResultColumnValue(feature, column) {
+  const accessorKeys = Array.isArray(column?.accessorKeys) && column.accessorKeys.length
+    ? column.accessorKeys
+    : [column?.key];
+
+  for (const accessorKey of accessorKeys) {
+    const topLevelValue = findValueByKey(feature, accessorKey);
+    if (topLevelValue !== undefined) {
+      return topLevelValue;
+    }
+
+    const attributeValue = findValueByKey(feature.attributes, accessorKey);
+    if (attributeValue !== undefined) {
+      return attributeValue;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeResultPanel(panel) {
+  if (panel?.type !== "dataset_features" || !Array.isArray(panel.features) || !panel.features.length) {
+    return null;
+  }
+
+  const features = panel.features
+    .filter((feature) => feature?.objectId !== undefined && feature?.objectId !== null)
+    .map((feature) => ({
+      ...feature,
+      objectId: String(feature.objectId),
+      attributes:
+        feature.attributes && typeof feature.attributes === "object" && !Array.isArray(feature.attributes)
+          ? feature.attributes
+          : {}
+    }));
+
+  if (!features.length) {
+    return null;
+  }
+
+  const fallbackColumns = [
+    { key: "objectId", label: "ObjectID" },
+    ...Object.keys(features[0].attributes || {})
+      .map((key) => ({ key, label: key }))
+  ];
+
+  return {
+    ...panel,
+    features,
+    columns: Array.isArray(panel.columns) && panel.columns.length ? panel.columns : fallbackColumns,
+    selectedObjectId: String(panel.selectedObjectId || features[0].objectId)
+  };
 }
 
 function summarizeDatasetForAI(dataset) {
@@ -214,6 +303,89 @@ function RouteSummaryPanel({ panel, t, onClose }) {
   );
 }
 
+function ResultTablePanel({ panel, t, onClose, onSelectFeature, onShowAll }) {
+  if (!panel) {
+    return null;
+  }
+
+  const columns = Array.isArray(panel.columns) ? panel.columns : [];
+  const features = Array.isArray(panel.features) ? panel.features : [];
+
+  return (
+    <aside className="result-panel" aria-label={t.title}>
+      <header className="result-panel-header">
+        <div className="result-panel-title">
+          <Database size={18} aria-hidden="true" />
+          <div>
+            <h2>{panel.title || t.title}</h2>
+            <p>
+              {t.summary({
+                layerName: panel.layerName,
+                totalCount: panel.totalCount,
+                shownCount: panel.shownCount || features.length
+              })}
+            </p>
+          </div>
+        </div>
+        <button className="result-panel-close" onClick={onClose} title={t.close} type="button">
+          <X size={17} aria-hidden="true" />
+          <span className="visually-hidden">{t.close}</span>
+        </button>
+      </header>
+
+      {panel.summary && <p className="result-panel-copy">{panel.summary}</p>}
+
+      <div className="result-panel-actions">
+        <button type="button" onClick={onShowAll}>
+          <MapPin size={15} aria-hidden="true" />
+          <span>{t.highlightAll}</span>
+        </button>
+      </div>
+
+      <div className="result-table-wrap">
+        <table className="result-table">
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column.key}>{column.label || column.key}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {features.map((feature) => (
+              <tr
+                className={panel.selectedObjectId === String(feature.objectId) ? "is-selected" : ""}
+                key={feature.objectId}
+              >
+                {columns.map((column, index) => {
+                  const value = formatResultCellValue(getResultColumnValue(feature, column));
+
+                  return (
+                    <td key={`${feature.objectId}-${column.key}`} title={value}>
+                      {index === 0 ? (
+                        <button
+                          className="result-row-button"
+                          onClick={() => onSelectFeature(feature)}
+                          title={t.zoomToFeature}
+                          type="button"
+                        >
+                          {value}
+                        </button>
+                      ) : (
+                        value
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </aside>
+  );
+}
+
 export default function App() {
   const mapRef = useRef(null);
   const [language, setLanguage] = useState("tr");
@@ -222,6 +394,7 @@ export default function App() {
   const [isMapReady, setIsMapReady] = useState(false);
   const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP_ID);
   const [routePanel, setRoutePanel] = useState(null);
+  const [resultPanel, setResultPanel] = useState(null);
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [activeDataset, setActiveDataset] = useState(null);
   const [datasetUploadState, setDatasetUploadState] = useState(null);
@@ -303,6 +476,7 @@ export default function App() {
       let dataset = uploadedDataset;
       setActiveDataset(uploadedDataset);
       setRoutePanel(null);
+      setResultPanel(null);
 
       if (mapRef.current) {
         await mapRef.current.showDataset(uploadedDataset);
@@ -359,7 +533,55 @@ export default function App() {
     return activeDataset;
   }
 
+  async function highlightResultFeatures(features, selectedObjectId = null) {
+    if (!resultPanel || !Array.isArray(features) || !features.length) {
+      return;
+    }
+
+    try {
+      const mapActions = getMapActions();
+      const dataset = resolveDatasetForAction(resultPanel.datasetId);
+      await mapActions.highlightDatasetFeatures({
+        dataset,
+        layerId: resultPanel.layerId,
+        objectIds: features.map((feature) => String(feature.objectId)),
+        features
+      });
+
+      setRoutePanel(null);
+      setResultPanel((current) =>
+        current
+          ? {
+              ...current,
+              selectedObjectId:
+                selectedObjectId === null ? current.selectedObjectId : String(selectedObjectId)
+            }
+          : current
+      );
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        createMessage(
+          "assistant",
+          error.message || t.messages.unexpectedError,
+          { intent: "error" }
+        )
+      ]);
+    }
+  }
+
+  async function handleResultFeatureSelect(feature) {
+    await highlightResultFeatures([feature], feature.objectId);
+  }
+
+  async function handleResultShowAll() {
+    await highlightResultFeatures(resultPanel?.features || []);
+  }
+
   async function executeGeoAIAction(result) {
+    const nextResultPanel = normalizeResultPanel(result?.resultPanel);
+    setResultPanel(nextResultPanel);
+
     const mapAction = result?.mapAction;
     if (!mapAction) {
       return result?.answer || t.messages.noAnswer;
@@ -390,6 +612,7 @@ export default function App() {
     }
 
     if (mapAction.action === "show_locations") {
+      setResultPanel(null);
       const locations = Array.isArray(mapAction.locations)
         ? mapAction.locations.filter(hasCoordinates).map((location) => ({
             ...location,
@@ -437,6 +660,7 @@ export default function App() {
 
     if (mapAction.action === "show_location") {
       setRoutePanel(null);
+      setResultPanel(null);
       if (!hasCoordinates(mapAction)) {
         throw new Error(t.messages.invalidCoordinates);
       }
@@ -454,18 +678,21 @@ export default function App() {
 
     if (mapAction.action === "geocode") {
       setRoutePanel(null);
+      setResultPanel(null);
       const mapResult = await mapActions.geocodeAndShow(mapAction.query);
       return result.answer || mapResult.answer;
     }
 
     if (mapAction.action === "clear_graphics") {
       setRoutePanel(null);
+      setResultPanel(null);
       mapActions.clearGraphics();
       return result.answer || t.messages.clearGraphics;
     }
 
     if (mapAction.action === "zoom_home") {
       setRoutePanel(null);
+      setResultPanel(null);
       await mapActions.zoomHome();
       return result.answer || t.messages.zoomHome;
     }
@@ -527,6 +754,14 @@ export default function App() {
           panel={routePanel}
           t={t.routePanel}
           onClose={() => setRoutePanel(null)}
+        />
+
+        <ResultTablePanel
+          panel={resultPanel}
+          t={t.resultPanel}
+          onClose={() => setResultPanel(null)}
+          onSelectFeature={handleResultFeatureSelect}
+          onShowAll={handleResultShowAll}
         />
 
         {apiKeyMissing && (

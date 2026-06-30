@@ -94,6 +94,7 @@ Critical rules:
 - When the user asks for length, distance, perimeter, or "uzunluk", prefer the field named Shape_Length if it exists.
 - For feature results that should be highlighted on the map, SELECT object_id AS "objectId", ST_AsGeoJSON(geom)::json AS geometry, plus the useful physical columns such as "objectid", "name", "shape_area".
 - Always include WHERE geom IS NOT NULL when returning mappable features.
+- For "how many", "kaç adet", count, or matching-record questions on a layer, prefer a mappable feature query instead of a bare COUNT query: SELECT COUNT(*) OVER() AS total_count, object_id AS "objectId", ST_AsGeoJSON(geom)::json AS geometry, plus useful columns. This lets the UI show the answer and let the user browse matching records on the map.
 - Use ILIKE for user text filters unless the user explicitly asks for exact equality.
 - Add LIMIT. For feature/list/top queries use LIMIT 1 to 20 unless the user asks for a different small number. Never use LIMIT above 50.
 - If the question is not about the uploaded dataset, return {"intent":"not_dataset"}.
