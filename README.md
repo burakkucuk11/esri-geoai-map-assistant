@@ -20,6 +20,7 @@ OpenAI-compatible model
 
 - Esri MapView centered on Turkey
 - GeoAI assistant panel
+- IDVLabs-branded panel styling, logo placement, and favicon assets
 - Turkish UI by default, with an English language switcher
 - OpenAI-compatible JSON action planning through `/api/geoai`
 - Optional Ollama Cloud or local Ollama fallback
@@ -32,6 +33,10 @@ OpenAI-compatible model
 - Uploaded GDB layers shown on the map from PostGIS-backed feature endpoints
 - Dataset questions such as layer counts, field lists, distributions, and largest/smallest numeric records answered from PostGIS before the LLM fallback
 - AI responses can highlight uploaded GDB layers/features when the context or PostGIS analysis identifies them
+- Dataset answers can open a map-side result table panel for matching PostGIS features
+- Count/aggregate dataset answers can include browsable matching records instead of returning only a number
+- Result table rows can zoom/highlight individual features, or highlight the listed result set together
+- Result tables show the full imported layer schema instead of a hand-picked subset of columns
 - Uploaded dataset controls stay compact so the chat history and send button remain visible while working with large layer lists
 - `show_location`, `show_locations`, `show_dataset_layer`, `highlight_dataset_layer`, `highlight_dataset_features`, `change_basemap`, `geocode`, `clear_graphics`, and `zoom_home` map actions
 - Clear user-facing errors for missing or rejected Esri API keys
@@ -212,6 +217,10 @@ Dataset-focused questions use the configured AI provider as the first decision m
 
 New GDB uploads are imported as normal PostgreSQL columns. For example, GDB fields such as `ObjectID`, `Name`, and `Shape_Area` become table columns such as `objectid`, `name`, and `shape_area`, plus the PostGIS `geom` column. Older local imports that still contain an `attributes` JSONB column remain readable for compatibility.
 
+When a dataset answer returns matching features, the frontend opens a result table panel on the map. The panel uses the imported layer schema, so all available GDB/PostGIS fields for that layer are shown as columns. Row selection zooms to and highlights the selected feature, while the "Highlight all" action highlights the listed result set.
+
+For questions such as "how many records match this condition?", the backend tries to return both the numeric answer and a capped set of matching features for browsing. If the AI returns a bare `COUNT(*)` query, the backend attempts a companion read-only feature query from the same safe table/filter so the UI can still show a result panel. The number of rows shown in this panel is capped by `POSTGIS_AI_SQL_LIMIT`.
+
 The older rule-based dataset handlers remain as fallback for simple metadata questions or when the AI says the message is not a dataset SQL question.
 
 ## Local PostGIS Notes
@@ -283,6 +292,7 @@ Uploaded GDB / PostGIS workflow:
 
 - Which layers are in this GDB?
 - How many records are in the Building layer?
+- How many buildings have Name containing Malambwe?
 - List the fields in the Building layer
 - What is the average Shape_Area value in Building?
 - Which building has the largest Shape_Area?
@@ -306,6 +316,9 @@ Expected behavior:
 - Uploaded GDB previews are drawn as map graphics.
 - Uploaded GDB layers are imported into PostGIS and drawn as map graphics through the dataset feature endpoint.
 - Dataset-focused answers can query PostGIS and highlight exact uploaded layer features.
+- Dataset answers with matching records open a result table panel with all layer columns.
+- Clicking a result row zooms to and highlights that feature on the map.
+- Count answers can still expose matching records in the result panel when PostGIS can identify them.
 - `change_basemap` changes the map basemap without touching markers or routes.
 - `geocode` searches through Esri geocoding, zooms, and adds a marker.
 - `clear_graphics` clears temporary graphics.
