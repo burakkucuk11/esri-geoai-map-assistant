@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Database, Layers, Loader2, MapPin, Route, X } from "lucide-react";
 import GeoAIPanel from "./components/GeoAIPanel.jsx";
 import GeoMapView from "./components/MapView.jsx";
+import QueryPreviewCard from "./components/QueryPreviewCard.jsx";
 import { getDictionary, languageOptions } from "./i18n.js";
 import { hydrateDatasetFeatures, uploadGdbDataset } from "./services/datasetClient.js";
 import { askGeoAI } from "./services/geoAIClient.js";
+import { executeQueryPlan, requestQueryPlan } from "./services/queryPlanClient.js";
 
 const DEFAULT_BASEMAP_ID = "topo-vector";
 const BASEMAP_OPTIONS = [
@@ -135,6 +137,14 @@ function normalizeResultPanel(panel) {
     columns: Array.isArray(panel.columns) && panel.columns.length ? panel.columns : fallbackColumns,
     selectedObjectId: String(panel.selectedObjectId || features[0].objectId)
   };
+}
+
+function createDatasetLayerVisibility(dataset, fallbackVisibility = {}) {
+  const layers = Array.isArray(dataset?.layers) ? dataset.layers : [];
+
+  return Object.fromEntries(
+    layers.map((layer) => [layer.id, fallbackVisibility[layer.id] !== false])
+  );
 }
 
 function summarizeDatasetForAI(dataset) {
@@ -395,8 +405,13 @@ export default function App() {
   const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP_ID);
   const [routePanel, setRoutePanel] = useState(null);
   const [resultPanel, setResultPanel] = useState(null);
+  const [queryPreview, setQueryPreview] = useState(null);
+  const [isExecutingQueryPreview, setIsExecutingQueryPreview] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [activeDataset, setActiveDataset] = useState(null);
+  const [datasetLayerVisibility, setDatasetLayerVisibility] = useState({});
+  const [analysisLayerInfo, setAnalysisLayerInfo] = useState(null);
+  const [analysisLayerVisible, setAnalysisLayerVisible] = useState(true);
   const [datasetUploadState, setDatasetUploadState] = useState(null);
   const [messages, setMessages] = useState(() => [
     createMessage("assistant", "", { intent: "welcome", i18nKey: "welcome" })
@@ -474,20 +489,30 @@ export default function App() {
     try {
       const uploadedDataset = await uploadGdbDataset(file, language);
       let dataset = uploadedDataset;
+      const initialLayerVisibility = createDatasetLayerVisibility(uploadedDataset);
       setActiveDataset(uploadedDataset);
+      setDatasetLayerVisibility(initialLayerVisibility);
+      setAnalysisLayerInfo(null);
+      setAnalysisLayerVisible(true);
       setRoutePanel(null);
       setResultPanel(null);
+      setQueryPreview(null);
 
       if (mapRef.current) {
         await mapRef.current.showDataset(uploadedDataset);
+        mapRef.current.setDatasetLayerVisibility(initialLayerVisibility);
+        mapRef.current.setAnalysisLayerVisibility(true);
       }
 
       try {
         dataset = await hydrateDatasetFeatures(uploadedDataset, language);
+        const hydratedLayerVisibility = createDatasetLayerVisibility(dataset, initialLayerVisibility);
         setActiveDataset(dataset);
+        setDatasetLayerVisibility(hydratedLayerVisibility);
 
         if (mapRef.current) {
           await mapRef.current.showDataset(dataset);
+          mapRef.current.setDatasetLayerVisibility(hydratedLayerVisibility);
         }
       } catch (hydrateError) {
         console.warn("PostGIS feature hydration failed:", hydrateError);
@@ -540,13 +565,29 @@ export default function App() {
 
     try {
       const mapActions = getMapActions();
-      const dataset = resolveDatasetForAction(resultPanel.datasetId);
-      await mapActions.highlightDatasetFeatures({
-        dataset,
-        layerId: resultPanel.layerId,
-        objectIds: features.map((feature) => String(feature.objectId)),
-        features
-      });
+      if (resultPanel.analysisGeometryType) {
+        setAnalysisLayerInfo({
+          title: resultPanel.analysisTitle || resultPanel.title || t.panel.analysisLayerTitle,
+          count: features.length,
+          geometryType: resultPanel.analysisGeometryType
+        });
+        setAnalysisLayerVisible(true);
+        await mapActions.showAnalysisFeatures({
+          title: resultPanel.analysisTitle || resultPanel.title,
+          geometryType: resultPanel.analysisGeometryType,
+          objectIds: features.map((feature) => String(feature.objectId)),
+          features
+        });
+        mapActions.setAnalysisLayerVisibility(true);
+      } else {
+        const dataset = resolveDatasetForAction(resultPanel.datasetId);
+        await mapActions.highlightDatasetFeatures({
+          dataset,
+          layerId: resultPanel.layerId,
+          objectIds: features.map((feature) => String(feature.objectId)),
+          features
+        });
+      }
 
       setRoutePanel(null);
       setResultPanel((current) =>
@@ -588,6 +629,33 @@ export default function App() {
     }
 
     const mapActions = getMapActions();
+
+    if (mapAction.action === "show_analysis_features") {
+      setRoutePanel(null);
+      setAnalysisLayerInfo({
+        title:
+          mapAction.title ||
+          nextResultPanel?.analysisTitle ||
+          nextResultPanel?.title ||
+          t.panel.analysisLayerTitle,
+        count:
+          (Array.isArray(mapAction.features) ? mapAction.features.length : 0) ||
+          nextResultPanel?.shownCount ||
+          nextResultPanel?.features?.length ||
+          0,
+        geometryType: mapAction.geometryType || nextResultPanel?.analysisGeometryType || null
+      });
+      setAnalysisLayerVisible(true);
+      await mapActions.showAnalysisFeatures({
+        title: mapAction.title,
+        geometryType: mapAction.geometryType,
+        objectIds: mapAction.objectIds,
+        features: mapAction.features
+      });
+      mapActions.setAnalysisLayerVisibility(true);
+
+      return result.answer;
+    }
 
     if (
       mapAction.action === "highlight_dataset_layer" ||
@@ -686,6 +754,8 @@ export default function App() {
     if (mapAction.action === "clear_graphics") {
       setRoutePanel(null);
       setResultPanel(null);
+      setAnalysisLayerInfo(null);
+      setAnalysisLayerVisible(true);
       mapActions.clearGraphics();
       return result.answer || t.messages.clearGraphics;
     }
@@ -708,10 +778,46 @@ export default function App() {
 
     setInputValue("");
     setIsProcessing(true);
+    setQueryPreview(null);
     setMessages((current) => [...current, createMessage("user", question)]);
 
     try {
-      const result = await askGeoAI(question, buildGeoAIContext());
+      const context = buildGeoAIContext();
+      let planResult = null;
+
+      try {
+        planResult = await requestQueryPlan(question, context);
+      } catch (planError) {
+        if (planError.status !== 404) {
+          throw planError;
+        }
+
+        console.warn("Query-plan endpoint is not available, falling back to /api/geoai.");
+      }
+
+      if (planResult?.success && planResult.plan) {
+        setRoutePanel(null);
+        setQueryPreview(planResult);
+        setMessages((current) => [
+          ...current,
+          createMessage("assistant", t.messages.queryPreviewReady, { intent: "query_preview" })
+        ]);
+        return;
+      }
+
+      if (planResult && planResult.fallbackAllowed === false) {
+        setMessages((current) => [
+          ...current,
+          createMessage(
+            "assistant",
+            planResult.answer || t.messages.queryPreviewBlocked,
+            { intent: "error" }
+          )
+        ]);
+        return;
+      }
+
+      const result = await askGeoAI(question, context);
       const answer = await executeGeoAIAction(result);
 
       setMessages((current) => [
@@ -732,6 +838,82 @@ export default function App() {
     }
   }
 
+  async function handleExecuteQueryPreview() {
+    if (!queryPreview?.plan || !queryPreview?.planToken || isProcessing || isExecutingQueryPreview) {
+      return;
+    }
+
+    setIsProcessing(true);
+    setIsExecutingQueryPreview(true);
+
+    try {
+      const result = await executeQueryPlan(queryPreview.planToken, buildGeoAIContext());
+      const answer = await executeGeoAIAction(result);
+
+      setQueryPreview(null);
+      setMessages((current) => [
+        ...current,
+        createMessage("assistant", answer, { intent: result.type || "geoai" })
+      ]);
+    } catch (error) {
+      setQueryPreview(null);
+      setMessages((current) => [
+        ...current,
+        createMessage(
+          "assistant",
+          error.message || t.messages.unexpectedError,
+          { intent: "error" }
+        )
+      ]);
+    } finally {
+      setIsExecutingQueryPreview(false);
+      setIsProcessing(false);
+    }
+  }
+
+  function handleCancelQueryPreview() {
+    setQueryPreview(null);
+    setMessages((current) => [
+      ...current,
+      createMessage("assistant", t.messages.queryPreviewCancelled, { intent: "query_preview" })
+    ]);
+  }
+
+  function handleDatasetLayerVisibilityChange(layerId, visible) {
+    const nextVisibility = {
+      ...datasetLayerVisibility,
+      [layerId]: visible
+    };
+
+    setDatasetLayerVisibility(nextVisibility);
+
+    try {
+      mapRef.current?.setDatasetLayerVisibility(nextVisibility);
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        createMessage("assistant", error.message || t.messages.unexpectedError, {
+          intent: "error"
+        })
+      ]);
+    }
+  }
+
+  function handleAnalysisLayerVisibilityChange(visible) {
+    setAnalysisLayerVisible(visible);
+
+    try {
+      mapRef.current?.setAnalysisLayerVisibility(visible);
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        createMessage("assistant", error.message || t.messages.unexpectedError, {
+          intent: "error"
+        })
+      ]);
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="map-stage" aria-label={t.app.mapStageLabel}>
@@ -749,6 +931,18 @@ export default function App() {
           t={t.basemapControl}
           onChange={handleBasemapChange}
         />
+
+        {queryPreview?.plan && (
+          <aside className="map-query-preview-panel" aria-label={t.queryPreview.title}>
+            <QueryPreviewCard
+              disabled={isProcessing || isExecutingQueryPreview}
+              preview={queryPreview}
+              t={t.queryPreview}
+              onCancel={handleCancelQueryPreview}
+              onExecute={handleExecuteQueryPreview}
+            />
+          </aside>
+        )}
 
         <RouteSummaryPanel
           panel={routePanel}
@@ -781,11 +975,16 @@ export default function App() {
         messages={messages}
         selectedPoint={selectedPoint}
         activeDataset={activeDataset}
+        datasetLayerVisibility={datasetLayerVisibility}
+        analysisLayerInfo={analysisLayerInfo}
+        analysisLayerVisible={analysisLayerVisible}
         datasetUploadState={datasetUploadState}
         apiKeyMissing={apiKeyMissing}
-        t={{ ...t.panel, ...t.messages }}
+        t={{ ...t.panel, ...t.messages, queryPreview: t.queryPreview }}
         onExampleClick={submitQuestion}
         onDatasetUpload={handleDatasetUpload}
+        onDatasetLayerVisibilityChange={handleDatasetLayerVisibilityChange}
+        onAnalysisLayerVisibilityChange={handleAnalysisLayerVisibilityChange}
         onInputChange={setInputValue}
         onLanguageChange={setLanguage}
         onSubmit={submitQuestion}

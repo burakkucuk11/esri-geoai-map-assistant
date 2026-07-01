@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Database,
+  Eye,
+  EyeOff,
   Languages,
   Layers,
   Loader2,
@@ -38,11 +40,16 @@ export default function GeoAIPanel({
   messages,
   selectedPoint,
   activeDataset,
+  datasetLayerVisibility = {},
+  analysisLayerInfo,
+  analysisLayerVisible = true,
   datasetUploadState,
   apiKeyMissing,
   t,
   onExampleClick,
   onDatasetUpload,
+  onDatasetLayerVisibilityChange,
+  onAnalysisLayerVisibilityChange,
   onInputChange,
   onLanguageChange,
   onSubmit
@@ -55,6 +62,7 @@ export default function GeoAIPanel({
   const activeDatasetPreviewCount =
     activeDataset?.previewFeatureCount ??
     activeDatasetLayers.reduce((total, layer) => total + (layer.previewFeatureCount || 0), 0);
+  const hasAnalysisLayer = Boolean(analysisLayerInfo);
   const layerPopoverId = activeDataset ? `dataset-layer-popover-${activeDataset.id}` : undefined;
 
   useEffect(() => {
@@ -164,19 +172,19 @@ export default function GeoAIPanel({
                 : t.datasetEmpty}
             </p>
           </div>
-          {activeDataset && activeDatasetLayers.length > 0 && (
+          {activeDataset && (activeDatasetLayers.length > 0 || hasAnalysisLayer) && (
             <div className="dataset-layer-popover-wrap" ref={layerPopoverRef}>
               <button
                 aria-controls={layerPopoverId}
                 aria-expanded={isLayerPopoverOpen}
-                aria-label={`${t.datasetLayersLabel}: ${activeDatasetLayerCount}`}
+                aria-label={`${t.layerManagerLabel}: ${activeDatasetLayerCount}`}
                 className="dataset-layer-trigger"
                 onClick={() => setIsLayerPopoverOpen((current) => !current)}
-                title={`${t.datasetLayersLabel}: ${activeDatasetLayerCount}`}
+                title={`${t.layerManagerLabel}: ${activeDatasetLayerCount}`}
                 type="button"
               >
                 <Layers size={15} aria-hidden="true" />
-                <strong>{activeDatasetLayerCount}</strong>
+                <strong>{activeDatasetLayerCount + (hasAnalysisLayer ? 1 : 0)}</strong>
               </button>
               {isLayerPopoverOpen && (
                 <div
@@ -184,19 +192,83 @@ export default function GeoAIPanel({
                   id={layerPopoverId}
                   role="tooltip"
                 >
-                  <div className="dataset-layer-popover-title">{t.datasetLayersLabel}</div>
+                  <div className="dataset-layer-popover-title">{t.layerManagerLabel}</div>
                   <div className="dataset-layer-list" aria-label={t.datasetLayersLabel}>
                     {activeDatasetLayers.map((layer, index) => (
-                      <div
+                      <article
                         className="dataset-layer-item"
                         key={layer.id}
                         style={{ "--dataset-layer-color": getDatasetLayerColor(index) }}
                       >
                         <span className="dataset-layer-swatch" aria-hidden="true" />
-                        <span>{layer.name}</span>
+                        <span className="dataset-layer-name">{layer.name}</span>
                         <strong>{t.datasetFeatureCount(layer.featureCount)}</strong>
-                      </div>
+                        <button
+                          aria-pressed={datasetLayerVisibility[layer.id] !== false}
+                          className="dataset-layer-toggle"
+                          onClick={() =>
+                            onDatasetLayerVisibilityChange?.(
+                              layer.id,
+                              datasetLayerVisibility[layer.id] === false
+                            )
+                          }
+                          title={
+                            datasetLayerVisibility[layer.id] === false
+                              ? t.showLayer(layer.name)
+                              : t.hideLayer(layer.name)
+                          }
+                          type="button"
+                        >
+                          {datasetLayerVisibility[layer.id] === false ? (
+                            <EyeOff size={14} aria-hidden="true" />
+                          ) : (
+                            <Eye size={14} aria-hidden="true" />
+                          )}
+                          <span>
+                            {datasetLayerVisibility[layer.id] === false ? t.layerHidden : t.layerVisible}
+                          </span>
+                        </button>
+                      </article>
                     ))}
+                    {hasAnalysisLayer && (
+                      <>
+                        <div className="dataset-layer-section-title">
+                          {t.analysisLayersLabel}
+                        </div>
+                        <article
+                          className="dataset-layer-item is-analysis"
+                          style={{ "--dataset-layer-color": "#dc2626" }}
+                        >
+                          <span className="dataset-layer-swatch" aria-hidden="true" />
+                          <span className="dataset-layer-name">
+                            {analysisLayerInfo.title || t.analysisLayerTitle}
+                          </span>
+                          <strong>
+                            {t.datasetFeatureCount(analysisLayerInfo.count || 0)}
+                          </strong>
+                          <button
+                            aria-pressed={analysisLayerVisible}
+                            className="dataset-layer-toggle"
+                            onClick={() =>
+                              onAnalysisLayerVisibilityChange?.(!analysisLayerVisible)
+                            }
+                            title={
+                              analysisLayerVisible
+                                ? t.hideLayer(analysisLayerInfo.title || t.analysisLayerTitle)
+                                : t.showLayer(analysisLayerInfo.title || t.analysisLayerTitle)
+                            }
+                            type="button"
+                          >
+                            {analysisLayerVisible ? (
+                              <Eye size={14} aria-hidden="true" />
+                            ) : (
+                              <EyeOff size={14} aria-hidden="true" />
+                            )}
+                            <span>{analysisLayerVisible ? t.layerVisible : t.layerHidden}</span>
+                          </button>
+                        </article>
+                      </>
+                    )}
                   </div>
                 </div>
               )}

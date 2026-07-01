@@ -97,6 +97,26 @@ function getAISqlLimit() {
   return getNumberEnv("POSTGIS_AI_SQL_LIMIT", DEFAULT_AI_SQL_LIMIT);
 }
 
+export async function queryReadOnlyPostGIS(sql, values = [], options = {}) {
+  const timeoutMs = Math.max(1000, Math.min(15000, Number(options.timeoutMs) || 8000));
+  const client = await getPool().connect();
+
+  try {
+    await client.query("BEGIN TRANSACTION READ ONLY");
+    await client.query(`SET LOCAL statement_timeout = '${timeoutMs}ms'`);
+
+    const result = await client.query(sql, Array.isArray(values) ? values : []);
+
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function* readNdjson(filePath) {
   const stream = createReadStream(filePath, { encoding: "utf-8" });
   const lines = readline.createInterface({

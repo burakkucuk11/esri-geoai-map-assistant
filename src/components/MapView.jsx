@@ -456,6 +456,8 @@ const GeoMapView = forwardRef(function GeoMapView(
   const serviceLayerRef = useRef(null);
   const datasetLayerRef = useRef(null);
   const datasetHighlightLayerRef = useRef(null);
+  const datasetLayerVisibilityRef = useRef({});
+  const analysisLayerVisibleRef = useRef(true);
   const selectedPointRef = useRef(null);
 
   useEffect(() => {
@@ -798,6 +800,59 @@ const GeoMapView = forwardRef(function GeoMapView(
     });
   }
 
+  function isAnalysisGraphic(graphic) {
+    return graphic?.attributes?.layerId === "analysis-result";
+  }
+
+  function removeGraphicsByKind(layer, keepAnalysisGraphics) {
+    const graphicsToRemove = layer?.graphics?.filter((graphic) =>
+      keepAnalysisGraphics ? !isAnalysisGraphic(graphic) : isAnalysisGraphic(graphic)
+    );
+
+    if (graphicsToRemove?.length) {
+      layer.removeMany(graphicsToRemove);
+    }
+  }
+
+  function isDatasetGraphicVisible(graphic) {
+    return datasetLayerVisibilityRef.current[graphic?.attributes?.layerId] !== false;
+  }
+
+  function applyDatasetLayerVisibility() {
+    const applyVisibility = (graphic) => {
+      const layerId = graphic?.attributes?.layerId;
+      if (!layerId || layerId === "analysis-result") {
+        return;
+      }
+
+      graphic.visible = isDatasetGraphicVisible(graphic);
+    };
+
+    datasetLayerRef.current?.graphics?.forEach(applyVisibility);
+    datasetHighlightLayerRef.current?.graphics?.forEach(applyVisibility);
+  }
+
+  function applyAnalysisLayerVisibility() {
+    const visible = analysisLayerVisibleRef.current !== false;
+
+    datasetHighlightLayerRef.current?.graphics?.forEach((graphic) => {
+      if (graphic?.attributes?.layerId === "analysis-result") {
+        graphic.visible = visible;
+      }
+    });
+
+    if (!visible) {
+      const view = viewRef.current;
+      if (view) {
+        if (typeof view.closePopup === "function") {
+          view.closePopup();
+        } else {
+          view.popup?.close();
+        }
+      }
+    }
+  }
+
   async function showDatasetOnMap(dataset) {
     const view = viewRef.current;
     const datasetLayer = datasetLayerRef.current;
@@ -812,12 +867,14 @@ const GeoMapView = forwardRef(function GeoMapView(
 
     datasetLayer.removeAll();
     highlightLayer?.removeAll();
+    analysisLayerVisibleRef.current = true;
 
     if (!graphics.length) {
       throw new Error(currentLabels.datasetNoPreview || "GDB icin harita onizlemesi bulunamadi.");
     }
 
     datasetLayer.addMany(graphics);
+    applyDatasetLayerVisibility();
 
     const datasetExtent = getDatasetExtent(dataset);
     await view.goTo(
@@ -859,7 +916,7 @@ const GeoMapView = forwardRef(function GeoMapView(
       features
     );
 
-    highlightLayer.removeAll();
+    removeGraphicsByKind(highlightLayer, true);
 
     if (!graphics.length) {
       throw new Error(
@@ -869,6 +926,58 @@ const GeoMapView = forwardRef(function GeoMapView(
     }
 
     highlightLayer.addMany(graphics);
+    applyDatasetLayerVisibility();
+
+    await view.goTo(
+      {
+        target: graphics,
+        padding: 110
+      },
+      { duration: 750 }
+    );
+
+    openPopup(view, graphics[0]);
+
+    return {
+      answer: (currentLabels.datasetHighlighted || ((count) => `${count} detay vurgulandi.`))(
+        graphics.length
+      )
+    };
+  }
+
+  async function showAnalysisFeaturesOnMap({ title, geometryType, objectIds, features }) {
+    const view = viewRef.current;
+    const highlightLayer = datasetHighlightLayerRef.current;
+    const currentLabels = labelsRef.current;
+
+    if (!view || !highlightLayer) {
+      throw new Error(currentLabels.mapNotReady);
+    }
+
+    const objectIdSet = Array.isArray(objectIds) && objectIds.length
+      ? new Set(objectIds.map((id) => String(id)))
+      : null;
+    const analysisLayer = {
+      id: "analysis-result",
+      name: title || "Analiz sonucu",
+      geometryType: geometryType || "Polygon"
+    };
+    const graphics = (Array.isArray(features) ? features : [])
+      .filter((feature) => !objectIdSet || objectIdSet.has(String(feature.objectId)))
+      .map((feature) => createDatasetGraphic(analysisLayer, feature, highlightSymbol, currentLabels, 0))
+      .filter(Boolean);
+
+    removeGraphicsByKind(highlightLayer, false);
+
+    if (!graphics.length) {
+      throw new Error(
+        currentLabels.datasetNoMatchingFeatures ||
+          "Bu cevapla eslesen harita detayi onizlemede bulunamadi."
+      );
+    }
+
+    highlightLayer.addMany(graphics);
+    applyAnalysisLayerVisibility();
 
     await view.goTo(
       {
@@ -918,6 +1027,23 @@ const GeoMapView = forwardRef(function GeoMapView(
       return highlightDatasetOnMap(options);
     },
 
+    async showAnalysisFeatures(options) {
+      return showAnalysisFeaturesOnMap(options);
+    },
+
+    setDatasetLayerVisibility(visibility) {
+      datasetLayerVisibilityRef.current =
+        visibility && typeof visibility === "object" && !Array.isArray(visibility)
+          ? { ...visibility }
+          : {};
+      applyDatasetLayerVisibility();
+    },
+
+    setAnalysisLayerVisibility(visible) {
+      analysisLayerVisibleRef.current = visible !== false;
+      applyAnalysisLayerVisibility();
+    },
+
     changeBasemap(basemapId) {
       const view = viewRef.current;
       const currentLabels = labelsRef.current;
@@ -944,6 +1070,7 @@ const GeoMapView = forwardRef(function GeoMapView(
       routeLayerRef.current?.removeAll();
       serviceLayerRef.current?.removeAll();
       datasetHighlightLayerRef.current?.removeAll();
+      analysisLayerVisibleRef.current = true;
 
       const view = viewRef.current;
       if (view) {

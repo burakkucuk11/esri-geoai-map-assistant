@@ -14,21 +14,39 @@ const frontendProcess = {
   args: isWindows ? ["/d", "/s", "/c", "npm.cmd run dev:frontend"] : ["run", "dev:frontend"]
 };
 
-async function isBackendHealthy() {
+async function getBackendStatus() {
   try {
     const response = await fetch("http://localhost:3001/api/health", {
       signal: AbortSignal.timeout(1000)
     });
 
-    return response.ok;
+    if (!response.ok) {
+      return "down";
+    }
+
+    const health = await response.json().catch(() => null);
+    if (health?.capabilities?.queryPlan) {
+      return "current";
+    }
+
+    return health?.service === "geoai-esri-backend" ? "stale" : "down";
   } catch {
-    return false;
+    return "down";
   }
 }
 
+const backendStatus = await getBackendStatus();
+
+if (backendStatus === "stale") {
+  console.error(
+    "[backend] localhost:3001 uzerinde eski bir GeoAI backend calisiyor. Once eski node server/index.js process'ini kapatip npm run dev komutunu yeniden calistirin."
+  );
+  process.exit(1);
+}
+
 const processes = [
-  ...((await isBackendHealthy())
-    ? (console.log("[backend] mevcut http://localhost:3001 backend kullanılacak."), [])
+  ...(backendStatus === "current"
+    ? (console.log("[backend] mevcut http://localhost:3001 backend kullanilacak."), [])
     : [backendProcess]),
   {
     ...frontendProcess
@@ -85,7 +103,7 @@ for (const processConfig of processes) {
   child.on("exit", (code, signal) => {
     if (!shuttingDown) {
       console.error(
-        `[${processConfig.name}] kapandı (code=${code ?? "null"}, signal=${signal ?? "null"}).`
+        `[${processConfig.name}] kapandi (code=${code ?? "null"}, signal=${signal ?? "null"}).`
       );
       stopAll(code || 1);
     }
@@ -94,3 +112,4 @@ for (const processConfig of processes) {
 
 process.on("SIGINT", () => stopAll(0));
 process.on("SIGTERM", () => stopAll(0));
+

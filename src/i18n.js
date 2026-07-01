@@ -43,6 +43,29 @@ export const dictionaries = {
       summary: ({ layerName, totalCount, shownCount }) =>
         `${layerName || "Katman"} - ${Number(totalCount ?? shownCount ?? 0).toLocaleString("tr-TR")} sonuç, ${Number(shownCount ?? 0).toLocaleString("tr-TR")} kayıt listeleniyor`
     },
+    queryPreview: {
+      title: "İşlem Önizlemesi",
+      descriptionFallback: "Sorgu çalıştırılmadan önce onay bekleniyor.",
+      layers: "Katman",
+      operationType: "İşlem tipi",
+      tool: "Analiz aracı",
+      estimatedCount: "Tahmini kayıt",
+      filters: "Filtreler",
+      parameters: "Parametreler",
+      actions: "Yapılacak işlemler",
+      securitySafe: "Güvenli SELECT / PostGIS plan",
+      securityBlocked: "Güvenlik kontrolü başarısız",
+      run: "Çalıştır",
+      executing: "Çalıştırılıyor",
+      cancel: "İptal",
+      unknown: "Bilinmiyor",
+      operationTypes: {
+        attribute_filter: "Öznitelik filtresi",
+        spatial_analysis: "Konumsal analiz",
+        aggregation: "Agregasyon",
+        route_analysis: "Rota analizi"
+      }
+    },
     basemapControl: {
       label: "Altlık harita",
       selectLabel: "Altlık harita seç",
@@ -87,6 +110,13 @@ export const dictionaries = {
       datasetUpload: "GDB ZIP yükle",
       datasetLayersLabel: "Yüklenen GDB katmanları",
       datasetFeatureCount: (count) => `${count} detay`,
+      layerManagerLabel: "Katman yönetimi",
+      analysisLayersLabel: "Analiz sonuçları",
+      analysisLayerTitle: "Spatial analiz sonucu",
+      layerVisible: "Açık",
+      layerHidden: "Kapalı",
+      showLayer: (name) => `${name} katmanını aç`,
+      hideLayer: (name) => `${name} katmanını kapat`,
       languageSelectorLabel: "Dil seçimi",
       languageButtonTitle: (label) => `${label} diline geç`
     },
@@ -103,6 +133,9 @@ export const dictionaries = {
         "GeoAI isteği yorumladı, ancak bu harita aksiyonu desteklenmiyor.",
       noActiveDataset: "Önce bir GDB yükleyin.",
       datasetNotLoaded: "GeoAI farklı bir dataset istedi, ancak o dataset şu anda yüklü değil.",
+      queryPreviewReady: "İşlem önizlemesi hazır. Devam etmek için Çalıştır butonunu kullan.",
+      queryPreviewBlocked: "Bu istek güvenli bir sorgu planına dönüştürülemedi.",
+      queryPreviewCancelled: "İşlem iptal edildi. Herhangi bir veri sorgusu çalıştırılmadı.",
       unexpectedError: "İşlem sırasında beklenmeyen bir hata oluştu."
     },
     map: {
@@ -222,6 +255,29 @@ export const dictionaries = {
       summary: ({ layerName, totalCount, shownCount }) =>
         `${layerName || "Layer"} - ${Number(totalCount ?? shownCount ?? 0).toLocaleString("en-US")} results, ${Number(shownCount ?? 0).toLocaleString("en-US")} listed`
     },
+    queryPreview: {
+      title: "Operation Preview",
+      descriptionFallback: "Approval is required before this query runs.",
+      layers: "Layer",
+      operationType: "Operation type",
+      tool: "Analysis tool",
+      estimatedCount: "Estimated records",
+      filters: "Filters",
+      parameters: "Parameters",
+      actions: "Actions",
+      securitySafe: "Safe SELECT / PostGIS plan",
+      securityBlocked: "Security check failed",
+      run: "Run",
+      executing: "Running",
+      cancel: "Cancel",
+      unknown: "Unknown",
+      operationTypes: {
+        attribute_filter: "Attribute filter",
+        spatial_analysis: "Spatial analysis",
+        aggregation: "Aggregation",
+        route_analysis: "Route analysis"
+      }
+    },
     basemapControl: {
       label: "Basemap",
       selectLabel: "Select basemap",
@@ -266,6 +322,13 @@ export const dictionaries = {
       datasetUpload: "Upload GDB ZIP",
       datasetLayersLabel: "Uploaded GDB layers",
       datasetFeatureCount: (count) => `${count} features`,
+      layerManagerLabel: "Layer management",
+      analysisLayersLabel: "Analysis results",
+      analysisLayerTitle: "Spatial analysis result",
+      layerVisible: "On",
+      layerHidden: "Off",
+      showLayer: (name) => `Show ${name}`,
+      hideLayer: (name) => `Hide ${name}`,
       languageSelectorLabel: "Language selection",
       languageButtonTitle: (label) => `Switch to ${label}`
     },
@@ -282,6 +345,9 @@ export const dictionaries = {
         "GeoAI understood the request, but this map action is not supported.",
       noActiveDataset: "Upload a GDB first.",
       datasetNotLoaded: "GeoAI requested a different dataset, but it is not currently loaded.",
+      queryPreviewReady: "Operation preview is ready. Use Run to continue.",
+      queryPreviewBlocked: "This request could not be converted into a safe query plan.",
+      queryPreviewCancelled: "Operation cancelled. No data query was executed.",
       unexpectedError: "An unexpected error occurred during the operation."
     },
     map: {

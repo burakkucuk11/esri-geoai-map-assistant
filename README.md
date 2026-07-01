@@ -37,6 +37,10 @@ OpenAI-compatible model
 - Count/aggregate dataset answers can include browsable matching records instead of returning only a number
 - Result table rows can zoom/highlight individual features, or highlight the listed result set together
 - Result tables show the full imported layer schema instead of a hand-picked subset of columns
+- Query preview and approval flow for uploaded GDB/PostGIS questions through `/api/ai/query-plan` and `/api/ai/execute-plan`
+- Backend SQL safety checks for allowed tables, read-only `SELECT`, forbidden mutations, comments, and semicolon chaining
+- Tool-based spatial analysis plans for `within_distance`, `intersect`, `buffer`, and `aggregate_by_polygon`
+- Buffer and spatial-analysis results can be shown as temporary map graphics and browsed from the result panel
 - Uploaded dataset controls stay compact so the chat history and send button remain visible while working with large layer lists
 - `show_location`, `show_locations`, `show_dataset_layer`, `highlight_dataset_layer`, `highlight_dataset_features`, `change_basemap`, `geocode`, `clear_graphics`, and `zoom_home` map actions
 - Clear user-facing errors for missing or rejected Esri API keys
@@ -84,6 +88,7 @@ OPENAI_MODEL=your_model_name
 # Esri
 VITE_ARCGIS_API_KEY=your_esri_api_key_here
 VITE_GEOAI_API_URL=/api/geoai
+VITE_QUERY_PLAN_API_URL=/api/ai
 VITE_DATASETS_API_URL=/api/datasets
 
 # Backend
@@ -215,6 +220,14 @@ Map display can request PostGIS-backed features up to `POSTGIS_DISPLAY_FEATURE_L
 
 Dataset-focused questions use the configured AI provider as the first decision maker. The AI receives the uploaded dataset schema and returns a PostgreSQL/PostGIS `SELECT` statement. The backend then validates that SQL, allows only listed GDB import tables, runs it inside a read-only transaction, caps the returned row count with `POSTGIS_AI_SQL_LIMIT`, and highlights returned feature geometries when the SQL selects `object_id AS "objectId"` and `ST_AsGeoJSON(geom)::json AS geometry`.
 
+For uploaded GDB/PostGIS questions in the UI, the app now uses a two-step approval flow:
+
+1. `POST /api/ai/query-plan` asks the AI for a safe JSON operation plan and optionally runs a safe `SELECT COUNT(*)` estimate.
+2. The frontend shows an operation preview card with layers, operation type, filters, spatial tool, parameters, estimated count, and security status.
+3. `POST /api/ai/execute-plan` runs only after the user clicks `Run` / `Calistir`. The backend validates the plan again before querying PostGIS.
+
+General geography, basemap, geocode, and place-routing questions still fall back to the existing `/api/geoai` flow when the request is not about the uploaded dataset.
+
 New GDB uploads are imported as normal PostgreSQL columns. For example, GDB fields such as `ObjectID`, `Name`, and `Shape_Area` become table columns such as `objectid`, `name`, and `shape_area`, plus the PostGIS `geom` column. Older local imports that still contain an `attributes` JSONB column remain readable for compatibility.
 
 When a dataset answer returns matching features, the frontend opens a result table panel on the map. The panel uses the imported layer schema, so all available GDB/PostGIS fields for that layer are shown as columns. Row selection zooms to and highlights the selected feature, while the "Highlight all" action highlights the listed result set.
@@ -222,6 +235,17 @@ When a dataset answer returns matching features, the frontend opens a result tab
 For questions such as "how many records match this condition?", the backend tries to return both the numeric answer and a capped set of matching features for browsing. If the AI returns a bare `COUNT(*)` query, the backend attempts a companion read-only feature query from the same safe table/filter so the UI can still show a result panel. The number of rows shown in this panel is capped by `POSTGIS_AI_SQL_LIMIT`.
 
 The older rule-based dataset handlers remain as fallback for simple metadata questions or when the AI says the message is not a dataset SQL question.
+
+## Spatial Analysis Tools
+
+The AI does not directly execute spatial SQL for tool-style requests. It returns a JSON plan that selects one backend-controlled tool:
+
+- `within_distance`: finds target features within a meter distance of source features.
+- `intersect`: finds target features intersecting source features.
+- `buffer`: creates temporary buffer geometries around source features.
+- `aggregate_by_polygon`: counts/summarizes target features by polygon features.
+
+The backend resolves all layer and column names from the active dataset catalog, builds the PostGIS query, runs it in a read-only transaction, and returns a standard result table plus a map action.
 
 ## Local PostGIS Notes
 
@@ -300,6 +324,10 @@ Uploaded GDB / PostGIS workflow:
 - What is the Name distribution in the Water layer?
 - Show Water records where Name is Water Point
 - Which building with Name containing Malambwe has the largest Shape_Area?
+- Building katmaninda type degeri residential olanlari listele
+- Okullara 500 metre mesafedeki bos parselleri bul
+- Centerline katmaninin 100 metre tamponu icinde kalan Building kayitlarini goster
+- Mahallelere gore bina sayilarini hesapla
 
 Route and places workflow:
 
@@ -316,9 +344,11 @@ Expected behavior:
 - Uploaded GDB previews are drawn as map graphics.
 - Uploaded GDB layers are imported into PostGIS and drawn as map graphics through the dataset feature endpoint.
 - Dataset-focused answers can query PostGIS and highlight exact uploaded layer features.
+- Dataset/PostGIS execution requests show an operation preview and wait for user approval before running.
 - Dataset answers with matching records open a result table panel with all layer columns.
 - Clicking a result row zooms to and highlights that feature on the map.
 - Count answers can still expose matching records in the result panel when PostGIS can identify them.
+- Spatial analysis tools return table rows plus map highlights or temporary buffer graphics.
 - `change_basemap` changes the map basemap without touching markers or routes.
 - `geocode` searches through Esri geocoding, zooms, and adds a marker.
 - `clear_graphics` clears temporary graphics.
@@ -332,11 +362,13 @@ src/
   components/
     GeoAIPanel.jsx
     MapView.jsx
+    QueryPreviewCard.jsx
   data/
     mockServicePoints.js
   services/
     datasetClient.js
     geoAIClient.js
+    queryPlanClient.js
   utils/
     arcgisAuth.js
     geocoder.js
@@ -346,12 +378,21 @@ src/
   main.jsx
   styles.css
 server/
+  ai/
+    queryPlanner.js
   data/
     geoKnowledgeBase.js
+  gis/
+    metadataCatalog.js
+    resultPanel.js
+    spatialExecutors.js
+    spatialTools.js
+    sqlSafety.js
   python/
     gdb_export.py
     gdb_preview.py
   routes/
+    aiQueryPlanRoutes.js
     datasets.js
     geoai.js
   services/
